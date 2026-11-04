@@ -1,0 +1,110 @@
+# Vacancy Radar: roadmap
+
+Each stage is one or more PRs (`feat/<name>` → `main`). Tick boxes in the PR that completes them.
+
+Order follows a vertical slice: start accumulating raw data as early as possible (RSS keeps no history), then build a working version for personal use, then the showcase features and production deploy.
+
+## Phase A: Start accumulating data
+
+### Stage 0: Source research
+- [ ] DOU: RSS feeds, ToS, robots.txt
+- [ ] Djinni: RSS/API, ToS, robots.txt
+- [ ] Work.ua: API, ToS, robots.txt
+- [ ] Findings in `docs/sources.md`: allowed method, URLs, rate limits, available fields
+- [ ] Sample feeds saved as test fixtures
+
+### Stage 1: Skeleton
+- [ ] uv project, `src/vacancy_radar/` layout, `pyproject.toml`
+- [ ] ruff, mypy, pre-commit config
+- [ ] pydantic-settings config + `.env.example`
+- [ ] FastAPI app with `/health`
+- [ ] Docker Compose: api, worker, beat, postgres, redis
+- [ ] pytest with a Postgres test database
+- [ ] GitHub Actions CI: ruff, mypy, pytest (Postgres + Redis services)
+
+### Stage 2: Raw data + DOU adapter
+- [ ] Models `source`, `raw_vacancy` (JSONB payload, unique `(source_id, external_id)`)
+- [ ] Sync and async engines on psycopg 3
+- [ ] Initial Alembic migration
+- [ ] `SourceAdapter` interface
+- [ ] DOU RSS adapter (httpx + feedparser)
+- [ ] Idempotent upsert
+- [ ] CLI `python -m vacancy_radar.collect`
+- [ ] Tests: adapter on fixtures (respx), double-run idempotency
+
+### Stage 3: Early collection (free)
+- [ ] Choose free hosted Postgres (Neon or Supabase) after checking current limits
+- [ ] Run migrations against it
+- [ ] GitHub Actions cron workflow running the CLI every few hours, `DATABASE_URL` in GH Secrets
+- [ ] Verify data arrives over several days
+
+## Phase B: Working version for personal use
+
+### Stage 4: Celery collection
+- [ ] Celery app + `fetch_source` task wrapping the same collection code
+- [ ] Celery Beat schedule
+- [ ] Retry with exponential backoff and jitter
+- [ ] Redis token-bucket rate limiter per domain
+- [ ] Tests: retry on 5xx/timeout, rate limiter, task idempotency
+
+### Stage 5: Normalization
+- [ ] Models `vacancy`, `skill`
+- [ ] Salary parser: ranges, "від/до", UAH/USD/EUR
+- [ ] NBU exchange rates client, cached daily
+- [ ] Seniority and work-format detection
+- [ ] Skill dictionary with synonyms + extraction
+- [ ] Reprocessing task `raw_vacancy` → `vacancy`
+- [ ] Parametrized unit tests built from real collected examples
+
+### Stage 6: Auth and subscriptions
+- [ ] Models `user`, `subscription`
+- [ ] Registration and login (argon2, JWT in httpOnly cookie)
+- [ ] CSRF protection for forms
+- [ ] Base Jinja2 layout + HTMX
+- [ ] Subscription CRUD (skills, seniority, format, min salary USD)
+- [ ] Tests: auth flow, permissions, filter validation
+
+### Stage 7: Telegram
+- [ ] Bot API client on httpx
+- [ ] Deep-link account linking with a one-time token
+- [ ] Subscription matching in `domain/`
+- [ ] Model `notification` with unique `(subscription_id, cluster_id)`
+- [ ] Send task with Telegram 429 handling
+- [ ] Tests: matching, no duplicate sends on rerun
+
+## Phase C: Showcase features and production
+
+### Stage 8: Deduplication
+- [ ] Model `vacancy_cluster`
+- [ ] Exact fingerprint (normalized company + title + city)
+- [ ] Fuzzy match: pg_trgm candidates → rapidfuzz scoring, conservative threshold
+- [ ] Cluster assignment task
+- [ ] Tests on real duplicate / non-duplicate pairs
+
+### Stage 9: Search and analytics
+- [ ] FTS `search_vector` (`simple` + `unaccent`), GIN on it and on `skills`, trigram on title
+- [ ] Vacancy search page: FTS + filters + pagination
+- [ ] Materialized views: top skills per month, salary ranges per week, new vacancies per week (each with `n`)
+- [ ] Periodic refresh task
+- [ ] `/analytics` page with Chart.js, medians hidden below the minimum sample
+- [ ] `docs/analytics.md`: queries, EXPLAIN ANALYZE before/after indexes, findings
+
+### Stage 10: Second source
+- [ ] Adapter for the second allowed source (per `docs/sources.md`)
+- [ ] Cross-source dedup verified on real data
+
+### Stage 11: Deploy to VPS
+- [ ] Production Compose file + Caddy (HTTPS)
+- [ ] VPS setup: Docker, firewall, non-root user; Postgres and Redis not exposed, Redis password
+- [ ] Nightly `pg_dump` backup + tested restore
+- [ ] GitHub Actions deploy over SSH, secrets in GH Secrets
+- [ ] Migrate data from the free Postgres (`pg_dump` → `pg_restore`), disable the cron workflow
+- [ ] Smoke check after deploy
+
+### Stage 12: Polish
+- [ ] README: architecture diagram, screenshots, quickstart, decisions and trade-offs
+- [ ] CI and coverage badges
+- [ ] Verify the MVP definition of done in `CLAUDE.md`
+
+## Deferred (post-MVP)
+Email notifications, Work.ua and other sources, Jupyter notebook with market research, admin panel, ML seniority classification, scheduled digests, Sentry/Prometheus, UI i18n.
