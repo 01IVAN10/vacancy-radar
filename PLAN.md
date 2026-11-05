@@ -25,9 +25,9 @@ Outcome: Djinni is the first source. DOU's terms require consent for automated c
 - [x] GitHub Actions CI: ruff, mypy, pytest (Postgres + Redis services)
 
 ### Stage 2: Raw data + Djinni adapter
-- [ ] Models `source`, `raw_vacancy` (JSONB payload, unique `(source_id, external_id)`)
-- [ ] Sync and async engines on psycopg 3
-- [ ] Initial Alembic migration
+- [x] Models `source`, `raw_vacancy` (JSONB payload, unique `(source_id, external_id)`)
+- [x] Sync and async engines on psycopg 3
+- [x] Initial Alembic migration
 - [ ] `SourceAdapter` interface
 - [ ] Djinni RSS adapter (httpx + feedparser)
 - [ ] Idempotent upsert
