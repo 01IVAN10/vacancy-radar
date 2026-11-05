@@ -38,6 +38,7 @@ Outcome: Djinni is the first source. DOU's terms require consent for automated c
 - [x] Choose free hosted Postgres (Neon or Supabase) after checking current limits
 - [x] Run migrations against it
 - [x] GitHub Actions cron workflow running the CLI every 30 min, `DATABASE_URL` in GH Secrets
+- [x] Run log `collect_run` (status, counts, error per attempt) + checking queries in `docs/collection.md`
 - [ ] Verify data arrives over several days
 
 Decision (2026-11-05): Neon Free, Postgres 16, region `eu-central-1`. It has 1 GB of storage per project and 100 CU-hours a month, which is enough for about 30 CU-hours a month of collection. It has no inactivity pause and accepts IPv4 connections from GitHub runners. Supabase Free has 500 MB, pauses after 7 days of inactivity, and accepts direct connections only over IPv6. Postgres 16 matches the VPS, so `pg_dump` → `pg_restore` works in stage 11. Migrations run as the first step of every scheduled job.

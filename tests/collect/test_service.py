@@ -7,14 +7,15 @@ from sqlalchemy.orm import Session
 
 from tests.support import fixture_bytes
 from vacancy_radar.collect.service import (
+    MAX_ERROR_LENGTH,
     CollectStats,
     UpsertCounts,
     collect_source,
     ensure_source,
     upsert_raw_items,
 )
-from vacancy_radar.db.models import RawVacancy, Source
-from vacancy_radar.sources.base import FetchResult, RawItem
+from vacancy_radar.db.models import CollectRun, RawVacancy, Source
+from vacancy_radar.sources.base import FeedError, FetchResult, RawItem
 from vacancy_radar.sources.djinni import parse_feed
 
 ITEMS = parse_feed(fixture_bytes("djinni/rss_all.xml")).items
@@ -25,16 +26,23 @@ class FakeAdapter:
     name = "Fake source"
     base_url = "https://fake.example"
 
-    def __init__(self, result: FetchResult) -> None:
+    def __init__(self, result: FetchResult | Exception) -> None:
         self.result = result
 
     def fetch(self, client: httpx.Client) -> FetchResult:
+        if isinstance(self.result, Exception):
+            raise self.result
         return self.result
 
 
 @pytest.fixture
 def source_id(db_session: Session) -> int:
     return ensure_source(db_session, FakeAdapter(FetchResult(items=[])))
+
+
+def runs(session: Session) -> list[CollectRun]:
+    session.expire_all()
+    return list(session.scalars(select(CollectRun).order_by(CollectRun.id)))
 
 
 def stored(session: Session) -> dict[str, RawVacancy]:
@@ -116,3 +124,46 @@ def test_collect_source_stores_items_and_reports_stats(db_session: Session) -> N
         source="fake", fetched=5, skipped=1, inserted=0, updated=0, unchanged=5
     )
     assert len(stored(db_session)) == 5
+
+
+def test_collect_source_records_each_successful_run(db_session: Session) -> None:
+    adapter = FakeAdapter(FetchResult(items=ITEMS, skipped=1))
+
+    with httpx.Client() as client:
+        collect_source(adapter, client=client, session=db_session)
+        collect_source(adapter, client=client, session=db_session)
+
+    first, second = runs(db_session)
+    assert first.status == second.status == "ok"
+    assert (first.fetched, first.skipped, first.inserted, first.unchanged) == (5, 1, 5, 0)
+    assert (second.inserted, second.updated, second.unchanged) == (0, 0, 5)
+    assert first.error_type is None
+    assert first.started_at <= first.finished_at
+
+
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ConnectError("connection refused"), FeedError("not an RSS feed")],
+)
+def test_failed_fetch_is_recorded_and_raised_again(db_session: Session, error: Exception) -> None:
+    adapter = FakeAdapter(error)
+
+    with httpx.Client() as client, pytest.raises(type(error)):
+        collect_source(adapter, client=client, session=db_session)
+
+    [run] = runs(db_session)
+    assert run.status == "failed"
+    assert run.error_type == type(error).__name__
+    assert run.error == str(error)
+    assert run.fetched is None
+    assert stored(db_session) == {}
+
+
+def test_long_error_message_is_truncated(db_session: Session) -> None:
+    adapter = FakeAdapter(FeedError("x" * 5000))
+
+    with httpx.Client() as client, pytest.raises(FeedError):
+        collect_source(adapter, client=client, session=db_session)
+
+    [run] = runs(db_session)
+    assert run.error == "x" * MAX_ERROR_LENGTH

@@ -24,4 +24,6 @@ def test_downgrade_and_upgrade_round_trip(migrated_engine: Engine, test_database
     command.upgrade(config, "head")
 
     assert tables_after_downgrade <= {"alembic_version"}
-    assert {"source", "raw_vacancy"} <= set(inspect(migrated_engine).get_table_names())
+    assert {"source", "raw_vacancy", "collect_run"} <= set(
+        inspect(migrated_engine).get_table_names()
+    )
