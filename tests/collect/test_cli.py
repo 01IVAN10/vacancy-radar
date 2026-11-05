@@ -6,6 +6,7 @@ empties the tables after each test.
 
 import json
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -96,6 +97,24 @@ def test_failed_source_exits_with_1(
     assert event["event"] == "collect.failed"
     assert event["level"] == "error"
     assert event["source"] == "djinni"
+
+
+def test_runs_without_redis_url(
+    respx_mock: respx.MockRouter,
+    migrated_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # The scheduled GitHub Actions collection has no Redis.
+    monkeypatch.delenv("REDIS_URL")
+    monkeypatch.chdir(tmp_path)
+    get_settings.cache_clear()
+    respx_mock.get(FEED_URL).respond(200, content=fixture_bytes("djinni/rss_all.xml"))
+
+    assert main(["djinni"]) == 0
+
+    assert get_settings().redis_url is None
+    assert row_count(migrated_engine) == 5
 
 
 def test_unknown_source_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:

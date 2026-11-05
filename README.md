@@ -58,6 +58,28 @@ Tests run against a real PostgreSQL database, because the project relies on FTS,
 
 `unchanged + updated` is the overlap with earlier runs. If it drops to 0, the feed moved on between runs and some vacancies were missed, so poll more often. Logs are JSON when stderr is not a terminal (CI, containers) and readable console output otherwise. The exit code is 1 if any source failed. See [`docs/sources.md`](docs/sources.md) for what each source allows.
 
+### Scheduled collection
+
+Until the VPS exists, the [`Collect`](.github/workflows/collect.yml) GitHub Actions workflow runs every 30 minutes. It applies pending migrations and then runs the collector against a free [Neon](https://neon.com) Postgres 16 database. The connection URL is the `DATABASE_URL` repository secret, in the form `postgresql+psycopg://<role>:<password>@<host>/<database>?sslmode=require&channel_binding=require`. This is the direct (not `-pooler`) connection string from the Neon console, with the scheme changed to `postgresql+psycopg://`. The role and database names are the ones the console shows. For running commands against Neon locally, keep the same line in a gitignored `.env.neon` and pass `uv run --env-file .env.neon …`. The job needs no Redis. A failing source turns the run red.
+
+| Task | Command |
+|---|---|
+| Run a collection now | `gh workflow run collect.yml` |
+| Recent runs | `gh run list --workflow collect.yml` |
+
+Back up the hosted database to a local file. `pg_dump` needs a plain `postgresql://` URL, so `+psycopg` is stripped. With Docker, no local Postgres client is needed:
+
+```sh
+mkdir -p ~/Backups/vacancy-radar
+docker run --rm -e PGURL="$(sed -n 's/^DATABASE_URL=//p' .env.neon | sed 's/+psycopg//')" \
+  postgres:16 sh -c 'pg_dump --format=custom "$PGURL"' \
+  > ~/Backups/vacancy-radar/vacancy_radar-$(date +%F).dump
+```
+
+With a local client instead (`brew install libpq`, version 16 or newer), run `pg_dump --format=custom --file=<file>.dump "<URL without +psycopg>"`.
+
+The data moves to the VPS at deploy time (stage 11 in [`PLAN.md`](PLAN.md)).
+
 ## Project layout
 
 ```text

@@ -1,0 +1,43 @@
+# Scheduled collection until the VPS exists (stage 11).
+#
+# RSS keeps no history, so this job fetches every source on a schedule and
+# stores the items in the hosted Postgres behind the DATABASE_URL secret.
+# Every step is idempotent: migrations are a no-op when the schema is current,
+# and collecting the same feed twice changes nothing.
+
+name: Collect
+
+on:
+  schedule:
+    # Every 30 min (see docs/sources.md), off the top of the hour, when GitHub
+    # delays scheduled runs the most.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+# Never run two collections at once; a queued run waits for the current one.
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    # Forks have no DATABASE_URL and must not poll the sources.
+    if: github.repository == '01IVAN10/vacancy-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      APP_ENV: production
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Apply migrations
+        run: uv run --no-dev alembic upgrade head
+      - name: Collect all sources
+        run: uv run --no-dev python -m vacancy_radar.collect

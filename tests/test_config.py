@@ -41,12 +41,18 @@ def test_defaults_to_local_environment(env: pytest.MonkeyPatch) -> None:
     assert settings.log_level == "INFO"
 
 
-@pytest.mark.parametrize("missing", ["DATABASE_URL", "REDIS_URL"])
-def test_connection_urls_are_required(env: pytest.MonkeyPatch, missing: str) -> None:
-    env.delenv(missing)
+def test_database_url_is_required(env: pytest.MonkeyPatch) -> None:
+    env.delenv("DATABASE_URL")
 
-    with pytest.raises(ValidationError, match=missing.lower()):
+    with pytest.raises(ValidationError, match="database_url"):
         load()
+
+
+def test_redis_url_is_optional(env: pytest.MonkeyPatch) -> None:
+    # The collector CLI and Alembic run without Redis; only Celery needs it.
+    env.delenv("REDIS_URL")
+
+    assert load().redis_url is None
 
 
 @pytest.mark.parametrize(

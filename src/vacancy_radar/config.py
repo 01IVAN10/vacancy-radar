@@ -10,8 +10,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Runtime configuration.
 
-    Connection URLs have no defaults on purpose: a deployment with a missing
+    `database_url` has no default on purpose: a deployment with a missing
     variable must fail at startup instead of silently connecting to localhost.
+
+    `redis_url` is optional because only Celery needs it. The collector CLI
+    and Alembic run without Redis (the scheduled GitHub Actions collection
+    does), and `create_celery()` fails at startup when it is missing.
     """
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -19,7 +23,7 @@ class Settings(BaseSettings):
     app_env: Literal["local", "test", "production"] = "local"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     database_url: PostgresDsn
-    redis_url: RedisDsn
+    redis_url: RedisDsn | None = None
 
 
 @lru_cache
