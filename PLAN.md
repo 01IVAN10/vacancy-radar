@@ -16,10 +16,10 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 Outcome: Djinni is the first source. DOU's terms require consent for automated collection, so DOU waits for it (stage 10). Work.ua is not allowed.
 
 ### Stage 1: Skeleton
-- [ ] uv project, `src/vacancy_radar/` layout, `pyproject.toml`
-- [ ] ruff, mypy, pre-commit config
-- [ ] pydantic-settings config + `.env.example`
-- [ ] FastAPI app with `/health`
+- [x] uv project, `src/vacancy_radar/` layout, `pyproject.toml`
+- [x] ruff, mypy, pre-commit config
+- [x] pydantic-settings config + `.env.example`
+- [x] FastAPI app with `/health`
 - [ ] Docker Compose: api, worker, beat, postgres, redis
 - [ ] pytest with a Postgres test database
 - [ ] GitHub Actions CI: ruff, mypy, pytest (Postgres + Redis services)
