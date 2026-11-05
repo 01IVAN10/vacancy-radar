@@ -7,11 +7,13 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 ## Phase A: Start accumulating data
 
 ### Stage 0: Source research
-- [ ] DOU: RSS feeds, ToS, robots.txt
-- [ ] Djinni: RSS/API, ToS, robots.txt
-- [ ] Work.ua: API, ToS, robots.txt
-- [ ] Findings in `docs/sources.md`: allowed method, URLs, rate limits, available fields
-- [ ] Sample feeds saved as test fixtures
+- [x] DOU: RSS feeds, ToS, robots.txt
+- [x] Djinni: RSS/API, ToS, robots.txt
+- [x] Work.ua: API, ToS, robots.txt
+- [x] Findings in `docs/sources.md`: allowed method, URLs, rate limits, available fields
+- [x] Sample feeds saved as test fixtures (Djinni; DOU waits for consent)
+
+Outcome: Djinni is the first source. DOU's terms require consent for automated collection, so DOU waits for it (stage 10). Work.ua is not allowed.
 
 ### Stage 1: Skeleton
 - [ ] uv project, `src/vacancy_radar/` layout, `pyproject.toml`
@@ -22,12 +24,12 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 - [ ] pytest with a Postgres test database
 - [ ] GitHub Actions CI: ruff, mypy, pytest (Postgres + Redis services)
 
-### Stage 2: Raw data + DOU adapter
+### Stage 2: Raw data + Djinni adapter
 - [ ] Models `source`, `raw_vacancy` (JSONB payload, unique `(source_id, external_id)`)
 - [ ] Sync and async engines on psycopg 3
 - [ ] Initial Alembic migration
 - [ ] `SourceAdapter` interface
-- [ ] DOU RSS adapter (httpx + feedparser)
+- [ ] Djinni RSS adapter (httpx + feedparser)
 - [ ] Idempotent upsert
 - [ ] CLI `python -m vacancy_radar.collect`
 - [ ] Tests: adapter on fixtures (respx), double-run idempotency
@@ -90,7 +92,8 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 - [ ] `docs/analytics.md`: queries, EXPLAIN ANALYZE before/after indexes, findings
 
 ### Stage 10: Second source
-- [ ] Adapter for the second allowed source (per `docs/sources.md`)
+- [ ] Written consent from DOU recorded in `docs/sources.md` (request to `legal@dou.ua`)
+- [ ] Adapter for the second allowed source (DOU once consented, per `docs/sources.md`) + its fixtures
 - [ ] Cross-source dedup verified on real data
 
 ### Stage 11: Deploy to VPS
