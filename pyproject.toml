@@ -8,9 +8,12 @@ dependencies = [
     "alembic>=1.20.1",
     "celery[redis]>=5.7.0",
     "fastapi>=0.162.0",
+    "feedparser>=6.0.14",
+    "httpx>=0.28.1",
     "psycopg[binary]>=3.3.8",
     "pydantic-settings>=2.16.2",
     "sqlalchemy[asyncio]>=2.1.8",
+    "structlog>=26.1.0",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -21,11 +24,11 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "celery-types>=0.26.0",
-    "httpx>=0.28.1",
     "mypy>=2.4.1",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
+    "respx>=0.23.1",
     "ruff>=0.17.3",
 ]
 
@@ -66,6 +69,12 @@ files = ["src", "tests", "migrations"]
 # Map files to modules from these roots, so `tests/support.py` is `tests.support`.
 mypy_path = ["src"]
 explicit_package_bases = true
+
+# feedparser ships no type hints. Its output is wrapped into typed `RawItem`s
+# in the adapter, so `Any` does not leak further.
+[[tool.mypy.overrides]]
+module = ["feedparser", "feedparser.*"]
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

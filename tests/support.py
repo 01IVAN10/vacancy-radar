@@ -25,3 +25,11 @@ def alembic_config(database_url: str) -> Config:
     config = Config(ALEMBIC_INI)
     config.set_main_option("sqlalchemy.url", to_sqlalchemy(database_url))
     return config
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def fixture_bytes(relative_path: str) -> bytes:
+    """Saved source response from `tests/fixtures/`, as the server sent it."""
+    return (FIXTURES / relative_path).read_bytes()
