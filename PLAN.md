@@ -20,9 +20,9 @@ Outcome: Djinni is the first source. DOU's terms require consent for automated c
 - [x] ruff, mypy, pre-commit config
 - [x] pydantic-settings config + `.env.example`
 - [x] FastAPI app with `/health`
-- [ ] Docker Compose: api, worker, beat, postgres, redis
-- [ ] pytest with a Postgres test database
-- [ ] GitHub Actions CI: ruff, mypy, pytest (Postgres + Redis services)
+- [x] Docker Compose: api, worker, beat, postgres, redis
+- [x] pytest with a Postgres test database
+- [x] GitHub Actions CI: ruff, mypy, pytest (Postgres + Redis services)
 
 ### Stage 2: Raw data + Djinni adapter
 - [ ] Models `source`, `raw_vacancy` (JSONB payload, unique `(source_id, external_id)`)

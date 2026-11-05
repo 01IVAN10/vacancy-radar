@@ -1,0 +1,82 @@
+# Local development stack. Production gets its own Compose file in stage 11.
+# Ports are bound to 127.0.0.1 so nothing is exposed beyond this machine.
+
+x-app: &app
+  build: .
+  image: vacancy-radar:dev
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    # Inside the Compose network the services are not on localhost.
+    DATABASE_URL: postgresql+psycopg://vacancy_radar:vacancy_radar@postgres:5432/vacancy_radar
+    REDIS_URL: redis://redis:6379/0
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *app
+    command: ["uvicorn", "vacancy_radar.api.app:app", "--host", "0.0.0.0", "--port", "8000",
+              "--reload", "--reload-dir", "/app/src"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://vacancy_radar:vacancy_radar@postgres:5432/vacancy_radar
+      REDIS_URL: redis://redis:6379/0
+      # Run the mounted source instead of the copy installed in the image.
+      PYTHONPATH: /app/src
+    volumes:
+      - ./src:/app/src:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "vacancy_radar.worker", "worker", "--loglevel=INFO"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A vacancy_radar.worker inspect ping --timeout 5"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+
+  beat:
+    <<: *app
+    # Keep the schedule state file in /tmp: the image's /app is not writable by the app user.
+    command: ["celery", "-A", "vacancy_radar.worker", "beat", "--loglevel=INFO",
+              "--schedule", "/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: vacancy_radar
+      POSTGRES_PASSWORD: vacancy_radar
+      POSTGRES_DB: vacancy_radar
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vacancy_radar -d vacancy_radar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
