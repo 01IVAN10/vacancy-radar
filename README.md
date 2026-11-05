@@ -67,6 +67,8 @@ Until the VPS exists, the [`Collect`](.github/workflows/collect.yml) GitHub Acti
 | Run a collection now | `gh workflow run collect.yml` |
 | Recent runs | `gh run list --workflow collect.yml` |
 
+Every attempt is also recorded in the `collect_run` table. [`docs/collection.md`](docs/collection.md) has the SQL that checks runs per day, gaps between runs, runs that may have missed items, and failures.
+
 Back up the hosted database to a local file. `pg_dump` needs a plain `postgresql://` URL, so `+psycopg` is stripped. With Docker, no local Postgres client is needed:
 
 ```sh

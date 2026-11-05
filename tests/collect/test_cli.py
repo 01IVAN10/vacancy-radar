@@ -19,7 +19,7 @@ from tests.support import fixture_bytes, to_sqlalchemy
 from vacancy_radar.collect.__main__ import main
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.engine import get_sessionmaker
-from vacancy_radar.db.models import RawVacancy
+from vacancy_radar.db.models import CollectRun, RawVacancy
 from vacancy_radar.sources.djinni import FEED_URL
 
 
@@ -35,14 +35,19 @@ def cli_database(
     get_sessionmaker.cache_clear()
     get_settings.cache_clear()
     with migrated_engine.begin() as connection:
-        connection.execute(text("TRUNCATE raw_vacancy, source RESTART IDENTITY"))
+        connection.execute(text("TRUNCATE collect_run, raw_vacancy, source RESTART IDENTITY"))
     # main() points structlog at pytest's captured stderr; undo that.
     structlog.reset_defaults()
 
 
-def row_count(engine: Engine) -> int:
+def row_count(engine: Engine, model: type[RawVacancy | CollectRun] = RawVacancy) -> int:
     with engine.connect() as connection:
-        return connection.scalar(select(func.count()).select_from(RawVacancy)) or 0
+        return connection.scalar(select(func.count()).select_from(model)) or 0
+
+
+def run_statuses(engine: Engine) -> list[str]:
+    with engine.connect() as connection:
+        return list(connection.scalars(select(CollectRun.status).order_by(CollectRun.id)))
 
 
 def log_events(stderr: str) -> list[dict[str, Any]]:
@@ -59,6 +64,7 @@ def test_running_twice_stores_each_vacancy_once(
     assert main(["djinni"]) == 0
 
     assert row_count(migrated_engine) == 5
+    assert run_statuses(migrated_engine) == ["ok", "ok"]
     first, second = log_events(capsys.readouterr().err)
     assert first["event"] == second["event"] == "collect.finished"
     assert (first["inserted"], first["unchanged"]) == (5, 0)
@@ -73,6 +79,7 @@ def test_dry_run_does_not_touch_the_database(
     assert main(["--dry-run"]) == 0
 
     assert row_count(migrated_engine) == 0
+    assert row_count(migrated_engine, CollectRun) == 0
     [event] = log_events(capsys.readouterr().err)
     assert event["event"] == "collect.dry_run"
     assert event["fetched"] == 5
@@ -93,6 +100,7 @@ def test_failed_source_exits_with_1(
     assert main([]) == 1
 
     assert row_count(migrated_engine) == 0
+    assert run_statuses(migrated_engine) == ["failed"]
     [event] = log_events(capsys.readouterr().err)
     assert event["event"] == "collect.failed"
     assert event["level"] == "error"

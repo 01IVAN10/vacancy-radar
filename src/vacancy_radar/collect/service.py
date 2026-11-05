@@ -3,18 +3,24 @@
 Idempotency is enforced by the database: `raw_vacancy` is unique on
 `(source_id, external_id)`, and every write is an `INSERT … ON CONFLICT`.
 Collecting the same feed twice leaves the table as it was after the first run.
+
+Every attempt, successful or not, is also recorded in `collect_run`.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import func, literal_column
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from vacancy_radar.db.models import RawVacancy, Source
-from vacancy_radar.sources.base import RawItem, SourceAdapter
+from vacancy_radar.db.models import CollectRun, RawVacancy, Source
+from vacancy_radar.sources.base import FeedError, RawItem, SourceAdapter
+
+# Enough to identify the failure; a long HTML error page is not worth storing.
+MAX_ERROR_LENGTH = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,12 +105,31 @@ def upsert_raw_items(session: Session, source_id: int, items: Sequence[RawItem])
 def collect_source(
     adapter: SourceAdapter, *, client: httpx.Client, session: Session
 ) -> CollectStats:
-    """Fetch one source and store its items in a single transaction."""
-    result = adapter.fetch(client)
+    """Fetch one source, store its items and record the run in one transaction.
+
+    A failed fetch is recorded as a `failed` run and committed, then the error
+    is raised again so the caller still sees it.
+    """
+    started_at = datetime.now(UTC)
+    try:
+        result = adapter.fetch(client)
+    except (httpx.HTTPError, FeedError) as exc:
+        session.add(
+            CollectRun(
+                source_id=ensure_source(session, adapter),
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                status="failed",
+                error_type=type(exc).__name__,
+                error=str(exc)[:MAX_ERROR_LENGTH],
+            )
+        )
+        session.commit()
+        raise
+
     source_id = ensure_source(session, adapter)
     counts = upsert_raw_items(session, source_id, result.items)
-    session.commit()
-    return CollectStats(
+    stats = CollectStats(
         source=adapter.slug,
         fetched=len(result.items),
         skipped=result.skipped,
@@ -112,3 +137,18 @@ def collect_source(
         updated=counts.updated,
         unchanged=counts.unchanged,
     )
+    session.add(
+        CollectRun(
+            source_id=source_id,
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+            status="ok",
+            fetched=stats.fetched,
+            skipped=stats.skipped,
+            inserted=stats.inserted,
+            updated=stats.updated,
+            unchanged=stats.unchanged,
+        )
+    )
+    session.commit()
+    return stats
