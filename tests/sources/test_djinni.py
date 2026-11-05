@@ -103,7 +103,7 @@ def test_partly_broken_feed_keeps_the_good_items_and_warns() -> None:
         result = parse_feed(feed)
 
     assert [item.external_id for item in result.items] == ["123"]
-    assert [log["event"] for log in logs] == ["djinni.feed_malformed"]
+    assert [log["event"] for log in logs] == ["feed.malformed"]
 
 
 # --- fetching ----------------------------------------------------------------

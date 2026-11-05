@@ -1,6 +1,6 @@
 # Checking collection
 
-Every collection attempt is a row in `collect_run`, so these questions are answered with SQL instead of job logs. Dry runs are not recorded.
+Every request to a source is a row in `collect_run`: `ok`, `failed`, or `dry_run` (fetched without storing items). These questions are answered with SQL instead of job logs.
 
 - Did collection run on schedule?
 - Did it fail?
@@ -15,7 +15,7 @@ docker run --rm -i -e PGURL="$(sed -n 's/^DATABASE_URL=//p' .env.neon | sed 's/+
 
 ## Runs per day
 
-Expect about 48 `ok` runs per source per day (every 30 minutes).
+The schedule runs every 15 minutes, and each source is fetched only when its `min_interval` has passed. Expect about 48 `ok` runs per day for Djinni (every ~30 minutes) and 32–48 for DOU (every 30–45 minutes). Runs skipped as not due leave no row.
 
 ```sql
 SELECT s.slug,

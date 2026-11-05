@@ -5,6 +5,7 @@ so the CLI and (from stage 4) the Celery task share the same code path.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Protocol
 
 import httpx
@@ -41,6 +42,9 @@ class SourceAdapter(Protocol):
     slug: str
     name: str
     base_url: str
+    # Shortest allowed time between two requests to the source, failed ones
+    # included. The schedule runs more often; a source that is not due is skipped.
+    min_interval: timedelta
 
     def fetch(self, client: httpx.Client) -> FetchResult:
         """Fetch the source once.

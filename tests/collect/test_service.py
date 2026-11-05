@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -11,7 +12,10 @@ from vacancy_radar.collect.service import (
     CollectStats,
     UpsertCounts,
     collect_source,
+    dry_run_source,
     ensure_source,
+    is_due,
+    last_attempt_at,
     upsert_raw_items,
 )
 from vacancy_radar.db.models import CollectRun, RawVacancy, Source
@@ -25,6 +29,7 @@ class FakeAdapter:
     slug = "fake"
     name = "Fake source"
     base_url = "https://fake.example"
+    min_interval = timedelta(minutes=30)
 
     def __init__(self, result: FetchResult | Exception) -> None:
         self.result = result
@@ -167,3 +172,60 @@ def test_long_error_message_is_truncated(db_session: Session) -> None:
 
     [run] = runs(db_session)
     assert run.error == "x" * MAX_ERROR_LENGTH
+
+
+def test_dry_run_records_the_request_without_storing_items(db_session: Session) -> None:
+    adapter = FakeAdapter(FetchResult(items=ITEMS, skipped=1))
+
+    with httpx.Client() as client:
+        result = dry_run_source(adapter, client=client, session=db_session)
+
+    assert len(result.items) == 5
+    [run] = runs(db_session)
+    assert (run.status, run.fetched, run.skipped, run.inserted) == ("dry_run", 5, 1, None)
+    assert stored(db_session) == {}
+
+
+def test_failed_dry_run_is_recorded_as_failed(db_session: Session) -> None:
+    adapter = FakeAdapter(FeedError("not an RSS feed"))
+
+    with httpx.Client() as client, pytest.raises(FeedError):
+        dry_run_source(adapter, client=client, session=db_session)
+
+    assert [run.status for run in runs(db_session)] == ["failed"]
+
+
+def test_source_without_runs_is_due(db_session: Session) -> None:
+    adapter = FakeAdapter(FetchResult(items=[]))
+
+    assert last_attempt_at(db_session, adapter) is None
+    assert is_due(db_session, adapter, now=datetime.now(UTC))
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "due"),
+    [
+        (timedelta(minutes=29, seconds=59), False),
+        (timedelta(minutes=30), True),
+        (timedelta(hours=2), True),
+    ],
+)
+def test_source_is_due_once_its_min_interval_has_passed(
+    db_session: Session, elapsed: timedelta, due: bool
+) -> None:
+    adapter = FakeAdapter(FetchResult(items=ITEMS))
+    with httpx.Client() as client:
+        collect_source(adapter, client=client, session=db_session)
+    [run] = runs(db_session)
+
+    assert last_attempt_at(db_session, adapter) == run.started_at
+    assert is_due(db_session, adapter, now=run.started_at + elapsed) is due
+
+
+def test_due_check_looks_only_at_the_same_source(db_session: Session) -> None:
+    other = FakeAdapter(FetchResult(items=ITEMS))
+    other.slug = "other"
+    with httpx.Client() as client:
+        collect_source(other, client=client, session=db_session)
+
+    assert is_due(db_session, FakeAdapter(FetchResult(items=[])), now=datetime.now(UTC))

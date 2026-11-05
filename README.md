@@ -60,7 +60,9 @@ Tests run against a real PostgreSQL database, because the project relies on FTS,
 
 ### Scheduled collection
 
-Until the VPS exists, the [`Collect`](.github/workflows/collect.yml) GitHub Actions workflow runs every 30 minutes. It applies pending migrations and then runs the collector against a free [Neon](https://neon.com) Postgres 16 database. The connection URL is the `DATABASE_URL` repository secret, in the form `postgresql+psycopg://<role>:<password>@<host>/<database>?sslmode=require&channel_binding=require`. This is the direct (not `-pooler`) connection string from the Neon console, with the scheme changed to `postgresql+psycopg://`. The role and database names are the ones the console shows. For running commands against Neon locally, keep the same line in a gitignored `.env.neon` and pass `uv run --env-file .env.neon …`. The job needs no Redis. A failing source turns the run red.
+Until the VPS exists, the [`Collect`](.github/workflows/collect.yml) GitHub Actions workflow runs every 15 minutes. It applies pending migrations and then runs the collector against a free [Neon](https://neon.com) Postgres 16 database. The connection URL is the `DATABASE_URL` repository secret, in the form `postgresql+psycopg://<role>:<password>@<host>/<database>?sslmode=require&channel_binding=require`. This is the direct (not `-pooler`) connection string from the Neon console, with the scheme changed to `postgresql+psycopg://`. The role and database names are the ones the console shows. For running commands against Neon locally, keep the same line in a gitignored `.env.neon` and pass `uv run --env-file .env.neon …`. The job needs no Redis. A failing source turns the run red.
+
+Each source sets a `min_interval`: Djinni 25 minutes, DOU 30 minutes, the limit in DOU's consent. A source is skipped until that much time has passed since its last request, as recorded in `collect_run`. So cron delays never make a request too early. To stop a source without a code change, set the `DISABLED_SOURCES` repository variable, e.g. to `dou` (Settings → Secrets and variables → Actions → Variables).
 
 | Task | Command |
 |---|---|
