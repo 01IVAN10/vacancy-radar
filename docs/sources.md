@@ -9,7 +9,7 @@ All checks below were made on **2026-11-05** with the project User-Agent `vacanc
 | Source | Status | Method | Priority |
 |---|---|---|---|
 | Djinni | allowed with conditions | Public RSS | 1st source (stage 2) |
-| DOU | pending consent | Public RSS | 2nd source (stage 10), only after written consent |
+| DOU | allowed with conditions (written consent, 2026-11-05) | Public RSS, all-jobs feed only | 2nd source (stage 10) |
 | Work.ua | not allowed | none available | deferred |
 
 Status values: `allowed`, `allowed with conditions`, `pending consent`, `not allowed`, `unclear`.
@@ -101,7 +101,34 @@ The all-jobs feed covers only ~2.5 h at weekday peak, so a poll interval of more
 
 ## DOU
 
-**Status: pending consent.** DOU publishes RSS feeds, and robots.txt does not restrict them, but its terms forbid automated collection without the Administration's consent. We collect nothing from DOU until consent is given in writing. The request goes to `legal@dou.ua`. Once consent arrives, record its date and wording here and change the status.
+**Status: allowed with conditions.** DOU publishes RSS feeds, and robots.txt does not restrict them, but its terms forbid automated collection without the Administration's consent (clause 2.5 below). Written consent was requested and granted on 2026-11-05, limited to the conditions listed below.
+
+### Consent
+
+- **Request:** sent to `legal@dou.ua` on 2026-11-05. It proposed the conditions below.
+- **Reply:** received on 2026-11-05 from DOU support (`support@developers.org.ua`), after DOU forwarded the request internally:
+
+  > «Доброго дня, можете використовувати за умов, які Ви описали в листі.»
+  > ("Good afternoon, you may use it on the conditions you described in your email.")
+
+- The original email thread is kept in the author's mailbox.
+
+The consent covers **only** the conditions proposed in the request. Each one is binding:
+
+1. At most **one request per 30 minutes**, to **one feed** (`https://jobs.dou.ua/vacancies/feeds/`). Individual vacancy pages are never fetched.
+2. User-Agent `vacancy-radar/0.1 (+https://github.com/01IVAN10/vacancy-radar)`.
+3. Public pages show only the title, normalized fields (stack, salary, work format), a short excerpt, and a link to the original on DOU **with attribution**. Full descriptions are not published.
+4. Aggregated statistics (e.g. technology popularity per month) name DOU as a source, with a link.
+5. The project is non-commercial: no ads, no monetization.
+6. Collection stops immediately if DOU asks.
+
+**What this means for implementation:**
+
+- **Rate limit (stage 4):** the DOU domain gets a minimum interval of 30 min that also covers retries. A retry inside the window would break condition 1, so a failed DOU fetch is skipped until the next cycle instead of being retried with backoff.
+- **Kill switch:** every source has an `enabled` flag in settings, so DOU collection can stop without a code change (condition 6).
+- **Attribution:** vacancy cards and `/analytics` show "Source: DOU" with a link (conditions 3–4).
+- **User-Agent:** the version is part of the agreed string. Keep `0.1` for DOU, or tell DOU when it changes.
+- Asking for anything beyond these conditions (category feeds, higher frequency, vacancy pages) needs a new request to DOU.
 
 ### robots.txt (`https://jobs.dou.ua/robots.txt`)
 
@@ -130,19 +157,19 @@ The rest of the file blocks specific SEO and commercial crawlers (`SemrushBot`, 
 
 The terms never mention RSS. An RSS client is automated software, so publishing a feed does not clearly amount to consent. Clause 3.2 covers reusing content: non-commercial use with attribution is fine, but it does not cover automated collection. Contacts: `legal@dou.ua` (legal), `support@dou.ua` (support).
 
-### Access (for when consent is granted)
+### Access
 
 | | |
 |---|---|
-| All jobs | `https://jobs.dou.ua/vacancies/feeds/` (50 items) |
-| One category | `https://jobs.dou.ua/vacancies/feeds/?category=<name>` (25 items), linked from the list page |
+| All jobs | `https://jobs.dou.ua/vacancies/feeds/` (50 items). **The only feed covered by the consent** |
+| One category | `https://jobs.dou.ua/vacancies/feeds/?category=<name>` (25 items), linked from the list page. Not covered by the consent, so not used |
 | Categories | 59 values from the list page filter (e.g. `Python`, `Data Science`, `Analyst`, `Big Data`, `DevOps`, `QA`) |
 | Other filters | The HTML list accepts `exp` (`0-1`, `1-3`, `3-5`, `5plus`) and `city`. Not verified on feeds |
 | Pagination | none: `?page=2` returns the same 50 items |
 | Format | RSS 2.0, `application/rss+xml; charset=utf-8`, behind Cloudflare |
 | Caching | `Cache-Control: max-age=600`, `Last-Modified`. `If-Modified-Since` still returns `200` with the full body. Polling more often than every 10 min is pointless |
 
-**Feed size:** all-jobs feed 50 items over **1.7 h** (Thu 14:25–16:06 Kyiv, ~30 items/h). `Python` feed 25 items over ~6 days. Recommended interval: every 30 min for the all-jobs feed, to be re-measured once collection starts.
+**Feed size:** all-jobs feed 50 items over **1.7 h** (Thu 14:25–16:06 Kyiv, ~30 items/h). `Python` feed 25 items over ~6 days. Interval: every 30 min for the all-jobs feed. This is also the minimum the consent allows, so re-measuring once collection starts can only make it longer.
 
 ### Fields
 
@@ -178,7 +205,7 @@ Revisit only if Work.ua publishes an API or feed, or gives permission.
 
 ## Open questions
 
-1. **DOU consent.** The consent request goes to `legal@dou.ua`. Until a reply arrives, DOU stays `pending consent` and stage 10 has no second source.
+1. ~~**DOU consent.**~~ Resolved on 2026-11-05: written consent on the proposed conditions (see [DOU → Consent](#consent)).
 2. **Company for Djinni.** The Djinni feed has no company field, and the dedup fingerprint (stage 8) needs normalized company + title + city. Options: extract the company from the description text, or ask Djinni whether fetching individual job pages is acceptable. Decide in stage 8.
 3. **Poll intervals** come from a single weekday sample. Re-measure using the run-overlap metric in stage 3.
 4. **Non-IT roles** in the Djinni all-jobs feed: store them raw (cheap, useful for analytics) and filter by category at normalization time, or poll only IT category feeds (many more requests). Current plan: store all, filter later.

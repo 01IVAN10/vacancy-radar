@@ -11,9 +11,9 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 - [x] Djinni: RSS/API, ToS, robots.txt
 - [x] Work.ua: API, ToS, robots.txt
 - [x] Findings in `docs/sources.md`: allowed method, URLs, rate limits, available fields
-- [x] Sample feeds saved as test fixtures (Djinni; DOU waits for consent)
+- [x] Sample feeds saved as test fixtures (Djinni; DOU fixtures come with its adapter in stage 10)
 
-Outcome: Djinni is the first source. DOU's terms require consent for automated collection, so DOU waits for it (stage 10). Work.ua is not allowed.
+Outcome: Djinni is the first source. DOU's terms require consent for automated collection. Consent was granted in writing on 2026-11-05 on the conditions in `docs/sources.md`, and DOU stays the second source (stage 10). Work.ua is not allowed.
 
 ### Stage 1: Skeleton
 - [x] uv project, `src/vacancy_radar/` layout, `pyproject.toml`
@@ -92,7 +92,7 @@ Outcome: Djinni is the first source. DOU's terms require consent for automated c
 - [ ] `docs/analytics.md`: queries, EXPLAIN ANALYZE before/after indexes, findings
 
 ### Stage 10: Second source
-- [ ] Written consent from DOU recorded in `docs/sources.md` (request to `legal@dou.ua`)
+- [x] Written consent from DOU recorded in `docs/sources.md` (request to `legal@dou.ua`)
 - [ ] Adapter for the second allowed source (DOU once consented, per `docs/sources.md`) + its fixtures
 - [ ] Cross-source dedup verified on real data
 
