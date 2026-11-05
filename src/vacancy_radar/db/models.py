@@ -62,14 +62,16 @@ class CollectRun(Base):
     """One attempt to collect one source, successful or not.
 
     A run with `status = 'ok'` carries the counts from `CollectStats`. A failed
-    run carries the error instead. `unchanged + updated` is the overlap with
-    earlier runs: an `ok` run where it is 0 means the feed moved past items
-    between two runs. Dry runs are not recorded.
+    run carries the error instead. A `dry_run` fetched the source without
+    storing items, so it has only `fetched` and `skipped`. Every status counts
+    as a request to the source for its `min_interval`. `unchanged + updated` is
+    the overlap with earlier runs: an `ok` run where it is 0 means the feed
+    moved past items between two runs.
     """
 
     __tablename__ = "collect_run"
     __table_args__ = (
-        CheckConstraint("status IN ('ok', 'failed')", name="status"),
+        CheckConstraint("status IN ('ok', 'failed', 'dry_run')", name="status"),
         Index("ix_collect_run_source_id_started_at", "source_id", "started_at"),
     )
 

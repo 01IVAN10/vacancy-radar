@@ -12,6 +12,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     """Provide a complete, valid environment with nothing else set."""
     monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("DISABLED_SOURCES", raising=False)
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("REDIS_URL", REDIS_URL)
     return monkeypatch
@@ -76,3 +77,25 @@ def test_get_settings_returns_cached_instance(env: pytest.MonkeyPatch) -> None:
         assert get_settings() is get_settings()
     finally:
         get_settings.cache_clear()
+
+
+def test_no_source_is_disabled_by_default(env: pytest.MonkeyPatch) -> None:
+    assert load().disabled_sources == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("dou", {"dou"}),
+        (" dou , djinni ", {"dou", "djinni"}),
+        # An unset GitHub repository variable arrives as an empty string.
+        ("", set()),
+        (",", set()),
+    ],
+)
+def test_disabled_sources_is_a_comma_separated_list(
+    env: pytest.MonkeyPatch, value: str, expected: set[str]
+) -> None:
+    env.setenv("DISABLED_SOURCES", value)
+
+    assert load().disabled_sources == expected

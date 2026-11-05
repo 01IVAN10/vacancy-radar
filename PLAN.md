@@ -11,7 +11,7 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 - [x] Djinni: RSS/API, ToS, robots.txt
 - [x] Work.ua: API, ToS, robots.txt
 - [x] Findings in `docs/sources.md`: allowed method, URLs, rate limits, available fields
-- [x] Sample feeds saved as test fixtures (Djinni; DOU fixtures come with its adapter in stage 10)
+- [x] Sample feeds saved as test fixtures (Djinni; DOU fixtures came with its adapter in stage 3)
 
 Outcome: Djinni is the first source. DOU's terms require consent for automated collection. Consent was granted in writing on 2026-11-05 on the conditions in `docs/sources.md`, and DOU stays the second source (stage 10). Work.ua is not allowed.
 
@@ -38,6 +38,8 @@ Outcome: Djinni is the first source. DOU's terms require consent for automated c
 - [x] Choose free hosted Postgres (Neon or Supabase) after checking current limits
 - [x] Run migrations against it
 - [x] GitHub Actions cron workflow running the CLI every 30 min, `DATABASE_URL` in GH Secrets
+- [x] DOU adapter (all-jobs feed, consent limits: `min_interval` 30 min, `DISABLED_SOURCES` kill switch), started early because RSS keeps no history
+- [x] Schedule every 15 min; each source is fetched only when its `min_interval` has passed
 - [x] Run log `collect_run` (status, counts, error per attempt) + checking queries in `docs/collection.md`
 - [ ] Verify data arrives over several days
 
@@ -96,7 +98,7 @@ Decision (2026-11-05): Neon Free, Postgres 16, region `eu-central-1`. It has 1 G
 
 ### Stage 10: Second source
 - [x] Written consent from DOU recorded in `docs/sources.md` (request to `legal@dou.ua`)
-- [ ] Adapter for the second allowed source (DOU once consented, per `docs/sources.md`) + its fixtures
+- [x] Adapter for the second allowed source (DOU once consented, per `docs/sources.md`) + its fixtures (done early, in stage 3)
 - [ ] Cross-source dedup verified on real data
 
 ### Stage 11: Deploy to VPS

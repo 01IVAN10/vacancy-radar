@@ -12,12 +12,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import func, literal_column
+from sqlalchemy import func, literal_column, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from vacancy_radar.db.models import CollectRun, RawVacancy, Source
-from vacancy_radar.sources.base import FeedError, RawItem, SourceAdapter
+from vacancy_radar.sources.base import FeedError, FetchResult, RawItem, SourceAdapter
 
 # Enough to identify the failure; a long HTML error page is not worth storing.
 MAX_ERROR_LENGTH = 1000
@@ -102,6 +102,24 @@ def upsert_raw_items(session: Session, source_id: int, items: Sequence[RawItem])
     return UpsertCounts(inserted=inserted, updated=updated, unchanged=len(unique) - len(written))
 
 
+def last_attempt_at(session: Session, adapter: SourceAdapter) -> datetime | None:
+    """When the source was last requested, by any kind of run."""
+    return session.scalar(
+        select(func.max(CollectRun.started_at))
+        .join(Source, Source.id == CollectRun.source_id)
+        .where(Source.slug == adapter.slug)
+    )
+
+
+def is_due(session: Session, adapter: SourceAdapter, *, now: datetime) -> bool:
+    """Whether at least `adapter.min_interval` has passed since the last request.
+
+    Failed and dry runs count too: they sent a request to the source as well.
+    """
+    last = last_attempt_at(session, adapter)
+    return last is None or now - last >= adapter.min_interval
+
+
 def collect_source(
     adapter: SourceAdapter, *, client: httpx.Client, session: Session
 ) -> CollectStats:
@@ -111,21 +129,7 @@ def collect_source(
     is raised again so the caller still sees it.
     """
     started_at = datetime.now(UTC)
-    try:
-        result = adapter.fetch(client)
-    except (httpx.HTTPError, FeedError) as exc:
-        session.add(
-            CollectRun(
-                source_id=ensure_source(session, adapter),
-                started_at=started_at,
-                finished_at=datetime.now(UTC),
-                status="failed",
-                error_type=type(exc).__name__,
-                error=str(exc)[:MAX_ERROR_LENGTH],
-            )
-        )
-        session.commit()
-        raise
+    result = fetch_or_record_failure(adapter, client=client, session=session, started_at=started_at)
 
     source_id = ensure_source(session, adapter)
     counts = upsert_raw_items(session, source_id, result.items)
@@ -152,3 +156,48 @@ def collect_source(
     )
     session.commit()
     return stats
+
+
+def dry_run_source(
+    adapter: SourceAdapter, *, client: httpx.Client, session: Session
+) -> FetchResult:
+    """Fetch and parse one source without storing its items.
+
+    The request is still recorded as a `dry_run` run, because it counts
+    against the source's `min_interval` like any other request.
+    """
+    started_at = datetime.now(UTC)
+    result = fetch_or_record_failure(adapter, client=client, session=session, started_at=started_at)
+    session.add(
+        CollectRun(
+            source_id=ensure_source(session, adapter),
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+            status="dry_run",
+            fetched=len(result.items),
+            skipped=result.skipped,
+        )
+    )
+    session.commit()
+    return result
+
+
+def fetch_or_record_failure(
+    adapter: SourceAdapter, *, client: httpx.Client, session: Session, started_at: datetime
+) -> FetchResult:
+    """Fetch the source. On failure, record a `failed` run, commit and raise again."""
+    try:
+        return adapter.fetch(client)
+    except (httpx.HTTPError, FeedError) as exc:
+        session.add(
+            CollectRun(
+                source_id=ensure_source(session, adapter),
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                status="failed",
+                error_type=type(exc).__name__,
+                error=str(exc)[:MAX_ERROR_LENGTH],
+            )
+        )
+        session.commit()
+        raise
