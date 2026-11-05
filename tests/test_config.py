@@ -9,7 +9,9 @@ REDIS_URL = "redis://cache.example:6379/0"
 
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
-    """Provide a complete, valid environment."""
+    """Provide a complete, valid environment with nothing else set."""
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("REDIS_URL", REDIS_URL)
     return monkeypatch

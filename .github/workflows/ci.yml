@@ -27,6 +27,34 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vacancy_radar
+          POSTGRES_PASSWORD: vacancy_radar
+          POSTGRES_DB: vacancy_radar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vacancy_radar"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://vacancy_radar:vacancy_radar@localhost:5432/vacancy_radar_test
+      TEST_DATABASE_URL: postgresql+psycopg://vacancy_radar:vacancy_radar@localhost:5432/vacancy_radar_test
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.3.3
@@ -34,3 +62,22 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest --cov
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Build image
+        run: docker build --tag vacancy-radar:ci .
+      - name: Smoke-test /health in the built image
+        run: |
+          docker run --detach --name api \
+            --env DATABASE_URL=postgresql+psycopg://u:p@localhost:5432/db \
+            --env REDIS_URL=redis://localhost:6379/0 \
+            --publish 8000:8000 vacancy-radar:ci
+          for _ in $(seq 1 20); do
+            curl --fail --silent http://localhost:8000/health && exit 0
+            sleep 1
+          done
+          docker logs api
+          exit 1
