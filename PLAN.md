@@ -28,11 +28,11 @@ Outcome: Djinni is the first source. DOU's terms require consent for automated c
 - [x] Models `source`, `raw_vacancy` (JSONB payload, unique `(source_id, external_id)`)
 - [x] Sync and async engines on psycopg 3
 - [x] Initial Alembic migration
-- [ ] `SourceAdapter` interface
-- [ ] Djinni RSS adapter (httpx + feedparser)
-- [ ] Idempotent upsert
-- [ ] CLI `python -m vacancy_radar.collect`
-- [ ] Tests: adapter on fixtures (respx), double-run idempotency
+- [x] `SourceAdapter` interface
+- [x] Djinni RSS adapter (httpx + feedparser)
+- [x] Idempotent upsert
+- [x] CLI `python -m vacancy_radar.collect`
+- [x] Tests: adapter on fixtures (respx), double-run idempotency
 
 ### Stage 3: Early collection (free)
 - [ ] Choose free hosted Postgres (Neon or Supabase) after checking current limits
