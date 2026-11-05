@@ -30,6 +30,7 @@ uv sync                          # create .venv with all dependencies
 uv run pre-commit install        # run linters on every commit
 cp .env.example .env             # settings for running on the host
 docker compose up -d postgres redis
+uv run alembic upgrade head      # create or update the database schema
 ```
 
 | Task | Command |
@@ -40,16 +41,20 @@ docker compose up -d postgres redis
 | Lint and format check | `uv run ruff check . && uv run ruff format --check .` |
 | Type check | `uv run mypy` |
 | All pre-commit hooks | `uv run pre-commit run --all-files` |
+| Apply migrations | `uv run alembic upgrade head` |
+| New migration after a model change | `uv run alembic revision --autogenerate -m "<what changed>"` |
 
-Tests run against a real PostgreSQL database, because the project relies on FTS, GIN indexes, `pg_trgm` and `ON CONFLICT`. By default they use `vacancy_radar_test` on the Compose Postgres and create it on first run. Set `TEST_DATABASE_URL` to use another server. The suite refuses to run against a database whose name does not end in `_test`.
+Tests run against a real PostgreSQL database, because the project relies on FTS, GIN indexes, `pg_trgm` and `ON CONFLICT`. By default they use `vacancy_radar_test` on the Compose Postgres, create it on first run and apply the Alembic migrations to it. Each test runs inside a transaction that is rolled back afterwards. Set `TEST_DATABASE_URL` to use another server. The suite refuses to run against a database whose name does not end in `_test`.
 
 ## Project layout
 
 ```text
 src/vacancy_radar/
 ├── api/        # FastAPI app and routes
+├── db/         # SQLAlchemy models and sync/async engines
 ├── domain/     # pure functions: parsing, normalization, matching (no I/O)
 ├── config.py   # settings from environment / .env
 └── worker.py   # Celery app for the worker and Beat
+migrations/     # Alembic migrations (the only way the schema changes)
 tests/          # pytest; fixtures/ holds saved source responses
 ```
