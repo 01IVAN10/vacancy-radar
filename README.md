@@ -58,6 +58,18 @@ Tests run against a real PostgreSQL database, because the project relies on FTS,
 
 `unchanged + updated` is the overlap with earlier runs. If it drops to 0, the feed moved on between runs and some vacancies were missed, so poll more often. Logs are JSON when stderr is not a terminal (CI, containers) and readable console output otherwise. The exit code is 1 if any source failed. See [`docs/sources.md`](docs/sources.md) for what each source allows.
 
+### Scheduled collection
+
+Until the VPS exists, the [`Collect`](.github/workflows/collect.yml) GitHub Actions workflow runs every 30 minutes. It applies pending migrations and then runs the collector against a free [Neon](https://neon.com) Postgres 16 database. The connection URL is the `DATABASE_URL` repository secret, in the form `postgresql+psycopg://<user>:<password>@<host>/vacancy_radar?sslmode=require` (the direct host, not `-pooler`). The job needs no Redis. A failing source turns the run red.
+
+| Task | Command |
+|---|---|
+| Run a collection now | `gh workflow run collect.yml` |
+| Recent runs | `gh run list --workflow collect.yml` |
+| Back up the hosted database | `pg_dump --format=custom --file="vacancy_radar-$(date +%F).dump" "<URL with postgresql://>"` |
+
+The data moves to the VPS at deploy time (stage 11 in [`PLAN.md`](PLAN.md)).
+
 ## Project layout
 
 ```text

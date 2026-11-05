@@ -11,8 +11,10 @@ from vacancy_radar.config import get_settings
 
 def create_celery() -> Celery:
     """Build the Celery app with Redis as both broker and result backend."""
-    redis_url = str(get_settings().redis_url)
-    app = Celery("vacancy_radar", broker=redis_url, backend=redis_url)
+    redis_url = get_settings().redis_url
+    if redis_url is None:
+        raise RuntimeError("REDIS_URL is required for the Celery worker and Beat")
+    app = Celery("vacancy_radar", broker=str(redis_url), backend=str(redis_url))
     app.conf.update(
         task_acks_late=True,
         task_reject_on_worker_lost=True,
