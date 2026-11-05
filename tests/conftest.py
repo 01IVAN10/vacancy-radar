@@ -3,31 +3,31 @@ from collections.abc import Iterator
 
 import psycopg
 import pytest
+from alembic import command
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from sqlalchemy import Engine
+from sqlalchemy.orm import Session
+
+from tests.support import DEFAULT_TEST_DATABASE_URL, alembic_config, to_libpq, to_sqlalchemy
+from vacancy_radar.db.engine import make_engine
 
 # Modules such as `vacancy_radar.worker` read settings at import time, so the
-# test environment must be complete before any of them is imported.
+# test environment must be complete before any of them is imported. The
+# default DATABASE_URL is the test database, so code that reads settings can
+# never write to the development database by accident.
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault(
-    "DATABASE_URL", "postgresql+psycopg://vacancy_radar:vacancy_radar@localhost:5432/vacancy_radar"
+    "DATABASE_URL",
+    to_sqlalchemy(to_libpq(os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL))),
 )
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
-
-DEFAULT_TEST_DATABASE_URL = (
-    "postgresql://vacancy_radar:vacancy_radar@localhost:5432/vacancy_radar_test"
-)
 
 
 @pytest.fixture
 def anyio_backend() -> str:
     """Run async tests on asyncio only (the app does not support trio)."""
     return "asyncio"
-
-
-def to_libpq(url: str) -> str:
-    """Turn a SQLAlchemy-style URL (`postgresql+psycopg://`) into one libpq accepts."""
-    return url.replace("postgresql+psycopg://", "postgresql://", 1)
 
 
 @pytest.fixture(scope="session")
@@ -68,3 +68,33 @@ def db_conn(test_database_url: str) -> Iterator[psycopg.Connection]:
             yield conn
         finally:
             conn.rollback()
+
+
+@pytest.fixture(scope="session")
+def migrated_engine(test_database_url: str) -> Iterator[Engine]:
+    """Sync engine on the test database, migrated to the latest revision.
+
+    Tests run the real migrations instead of `metadata.create_all`, so a
+    migration that drifts from the models fails the suite.
+    """
+    command.upgrade(alembic_config(test_database_url), "head")
+    engine = make_engine(to_sqlalchemy(test_database_url))
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def db_session(migrated_engine: Engine) -> Iterator[Session]:
+    """Session whose work, commits included, is rolled back after each test.
+
+    The outer transaction belongs to the fixture. `session.commit()` inside the
+    code under test only releases a savepoint, so nothing reaches the database.
+    """
+    with migrated_engine.connect() as connection:
+        transaction = connection.begin()
+        session = Session(bind=connection, join_transaction_mode="create_savepoint")
+        try:
+            yield session
+        finally:
+            session.close()
+            transaction.rollback()
