@@ -119,7 +119,9 @@ def committed_database(
     are emptied after each test. Yields the engine to check rows with.
     """
     monkeypatch.setenv("DATABASE_URL", to_sqlalchemy(test_database_url))
-    monkeypatch.delenv("DISABLED_SOURCES", raising=False)
+    # Set to empty rather than removed: without the variable, settings would
+    # fall back to a developer's `.env`, which may disable a source.
+    monkeypatch.setenv("DISABLED_SOURCES", "")
     get_settings.cache_clear()
     get_sessionmaker.cache_clear()
     yield migrated_engine
