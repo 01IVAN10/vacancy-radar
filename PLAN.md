@@ -4,6 +4,14 @@ Each stage is one or more PRs (`feat/<name>` → `main`). Tick boxes in the PR t
 
 Order follows a vertical slice: start accumulating raw data as early as possible (RSS keeps no history), then build a working version for personal use, then the showcase features and production deploy.
 
+## Current state
+
+Updated 2026-11-06.
+
+- **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
+- **Next:** the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
+- **In parallel:** stage 4 (Celery). Its retries must respect DOU's `min_interval`.
+
 ## Phase A: Start accumulating data
 
 ### Stage 0: Source research
@@ -41,6 +49,7 @@ Outcome: Djinni is the first source. DOU's terms require consent for automated c
 - [x] DOU adapter (all-jobs feed, consent limits: `min_interval` 30 min, `DISABLED_SOURCES` kill switch), started early because RSS keeps no history
 - [x] Schedule every 15 min; each source is fetched only when its `min_interval` has passed
 - [x] Run log `collect_run` (status, counts, error per attempt) + checking queries in `docs/collection.md`
+- [x] External trigger (cron-job.org → `workflow_dispatch`), because GitHub drops scheduled runs
 - [ ] Verify data arrives over several days
 
 Decision (2026-11-05): Neon Free, Postgres 16, region `eu-central-1`. It has 1 GB of storage per project and 100 CU-hours a month, which is enough for about 30 CU-hours a month of collection. It has no inactivity pause and accepts IPv4 connections from GitHub runners. Supabase Free has 500 MB, pauses after 7 days of inactivity, and accepts direct connections only over IPv6. Postgres 16 matches the VPS, so `pg_dump` → `pg_restore` works in stage 11. Migrations run as the first step of every scheduled job.
@@ -107,6 +116,7 @@ Decision (2026-11-05): Neon Free, Postgres 16, region `eu-central-1`. It has 1 G
 - [ ] Nightly `pg_dump` backup + tested restore
 - [ ] GitHub Actions deploy over SSH, secrets in GH Secrets
 - [ ] Migrate data from the free Postgres (`pg_dump` → `pg_restore`), disable the cron workflow
+- [ ] Delete the cron-job.org job and revoke its token
 - [ ] Smoke check after deploy
 
 ### Stage 12: Polish

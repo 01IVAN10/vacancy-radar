@@ -60,9 +60,31 @@ Tests run against a real PostgreSQL database, because the project relies on FTS,
 
 ### Scheduled collection
 
-Until the VPS exists, the [`Collect`](.github/workflows/collect.yml) GitHub Actions workflow runs every 15 minutes. It applies pending migrations and then runs the collector against a free [Neon](https://neon.com) Postgres 16 database. The connection URL is the `DATABASE_URL` repository secret, in the form `postgresql+psycopg://<role>:<password>@<host>/<database>?sslmode=require&channel_binding=require`. This is the direct (not `-pooler`) connection string from the Neon console, with the scheme changed to `postgresql+psycopg://`. The role and database names are the ones the console shows. For running commands against Neon locally, keep the same line in a gitignored `.env.neon` and pass `uv run --env-file .env.neon …`. The job needs no Redis. A failing source turns the run red.
+Until the VPS exists, the [`Collect`](.github/workflows/collect.yml) GitHub Actions workflow runs every 15 minutes, started by an external cron (see [Trigger](#trigger)). It applies pending migrations and then runs the collector against a free [Neon](https://neon.com) Postgres 16 database. The connection URL is the `DATABASE_URL` repository secret, in the form `postgresql+psycopg://<role>:<password>@<host>/<database>?sslmode=require&channel_binding=require`. This is the direct (not `-pooler`) connection string from the Neon console, with the scheme changed to `postgresql+psycopg://`. The role and database names are the ones the console shows. For running commands against Neon locally, keep the same line in a gitignored `.env.neon` and pass `uv run --env-file .env.neon …`. The job needs no Redis. A failing source turns the run red.
 
 Each source sets a `min_interval`: Djinni 25 minutes, DOU 30 minutes, the limit in DOU's consent. A source is skipped until that much time has passed since its last request, as recorded in `collect_run`. So cron delays never make a request too early. To stop a source without a code change, set the `DISABLED_SOURCES` repository variable, e.g. to `dou` (Settings → Secrets and variables → Actions → Variables).
+
+#### Trigger
+
+GitHub's own `schedule` trigger drops most runs of this workflow: on the first night it fired 2 times in ~14 hours, and DOU's feed moved past unseen vacancies during the 7-hour gap ([measurements](docs/collection.md#triggers)). So [cron-job.org](https://cron-job.org) starts the workflow through the API instead, and `schedule` stays only as a backup. Both triggers can fire in the same window. The `collect` concurrency group runs them one at a time, and `min_interval` makes the later one skip the sources it would fetch too early.
+
+To set the trigger up again:
+
+1. Create a fine-grained personal access token (Settings → Developer settings → Fine-grained tokens) for this repository only, with the single repository permission **Actions: Read and write**, expiring in 90 days. If the token leaks, it can only start, cancel, or delete workflow runs and enable or disable workflows. It cannot read secrets or push code.
+2. Create a cron-job.org job:
+
+   | Field | Value |
+   |---|---|
+   | URL | `https://api.github.com/repos/01IVAN10/vacancy-radar/actions/workflows/collect.yml/dispatches` |
+   | Schedule | minutes `7,22,37,52` of every hour, UTC (between the backup `schedule` minutes) |
+   | Method | `POST` |
+   | Headers | `Accept: application/vnd.github+json`, `Authorization: Bearer <token>`, `X-GitHub-Api-Version: 2022-11-28`, `Content-Type: application/json` |
+   | Body | `{"ref":"main"}` |
+   | Notifications | on failure |
+
+3. A test run returns `204`, and a new `workflow_dispatch` run appears in `gh run list --workflow collect.yml`.
+
+When the token expires, the API returns `401` and cron-job.org sends a failure notification. To fix it, create a new token and replace the `Authorization` header. GitHub still disables a workflow with a `schedule` after 60 days without commits to the repository, and a disabled workflow rejects dispatches too. If the cron-job.org job starts failing for that reason, run `gh workflow enable collect.yml`.
 
 | Task | Command |
 |---|---|

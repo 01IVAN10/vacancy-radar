@@ -8,12 +8,16 @@
 name: Collect
 
 on:
+  # Each source sets its own minimum interval (Djinni 25 min, DOU 30 min) and
+  # is skipped until it is due, so neither trigger nor cron jitter ever makes a
+  # request too early, however often the job runs.
   schedule:
-    # Every 15 min, off the top of the hour, when GitHub delays scheduled runs
-    # the most. Each source sets its own minimum interval (Djinni 25 min, DOU
-    # 30 min) and is skipped until it is due, so cron jitter never makes a
-    # request too early.
+    # Backup trigger only: GitHub drops most scheduled runs of this workflow
+    # (2 of ~56 on the first night, see docs/collection.md). Every 15 min, off
+    # the top of the hour, when GitHub delays scheduled runs the most.
     - cron: "2,17,32,47 * * * *"
+  # Primary trigger: cron-job.org calls the dispatch API at minutes
+  # 7,22,37,52 UTC with a fine-grained token limited to Actions on this repo.
   workflow_dispatch:
 
 # Never run two collections at once; a queued run waits for the current one.
