@@ -153,6 +153,7 @@ def test_collect_source_records_each_successful_run(db_session: Session) -> None
     assert (first.fetched, first.skipped, first.inserted, first.unchanged) == (5, 1, 5, 0)
     assert (second.inserted, second.updated, second.unchanged) == (0, 0, 5)
     assert first.error_type is None
+    assert first.finished_at is not None
     assert first.started_at <= first.finished_at
 
 
