@@ -187,6 +187,26 @@ def test_failed_source_exits_with_1_and_the_others_still_run(
     assert (finished["event"], finished["source"]) == ("collect.finished", "dou")
 
 
+def test_error_outside_http_is_recorded_and_the_others_still_run(
+    respx_mock: respx.MockRouter,
+    migrated_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def broken_parser(content: bytes) -> None:
+        raise ValueError("parser bug")
+
+    monkeypatch.setattr("vacancy_radar.sources.djinni.parse_feed", broken_parser)
+    respx_mock.get(FEED_URL).respond(200, content=DJINNI_FEED)
+    respx_mock.get(DOU_FEED_URL).respond(200, content=DOU_FEED)
+
+    assert main([]) == 1
+
+    assert run_statuses(migrated_engine) == ["failed", "ok"]
+    failed, _ = log_events(capsys.readouterr().err)
+    assert (failed["event"], failed["error_type"]) == ("collect.failed", "ValueError")
+
+
 def test_runs_without_redis_url(
     respx_mock: respx.MockRouter,
     migrated_engine: Engine,

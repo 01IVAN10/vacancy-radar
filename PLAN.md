@@ -64,7 +64,7 @@ Decision (2026-11-05): Neon Free, Postgres 16, region `eu-central-1`. It has 1 G
 - [x] Redis token-bucket rate limiter per domain
 - [x] Tests: retry on 5xx/timeout, rate limiter, task idempotency
 
-Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It applies the kill switch, a Postgres advisory lock per source, and `min_interval`. Retries are per source (`max_retries`: Djinni 3, DOU 0, because DOU's consent counts retries as requests) and skip only the `min_interval` check. Beat offers each source every 5 minutes. Locally, Compose disables DOU, which GitHub Actions collects into Neon until stage 11.
+Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It applies the kill switch, a Postgres advisory lock per source, and `min_interval`. Retries are per source (`max_retries`: Djinni 3, DOU 0, because DOU's consent counts retries as requests) and skip only the `min_interval` check. Fix after review (2026-11-07): a run is committed as `running` before its request, so any error after the request still counts against `min_interval`. A retry carries the id of the failed run it repeats (`retry_of`) and runs only while that run is the source's latest. Beat offers each source every 5 minutes. Locally, Compose disables DOU, which GitHub Actions collects into Neon until stage 11.
 
 ### Stage 5: Normalization
 - [x] Models `vacancy`, `skill`

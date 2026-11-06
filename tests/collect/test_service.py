@@ -11,6 +11,7 @@ from tests.support import fixture_bytes
 from vacancy_radar.collect.service import (
     COLLECT_LOCK_NAMESPACE,
     MAX_ERROR_LENGTH,
+    CollectError,
     CollectStats,
     DryRunStats,
     Skipped,
@@ -38,13 +39,13 @@ class FakeAdapter:
     min_interval = timedelta(minutes=30)
     max_retries = 0
 
-    def __init__(self, result: FetchResult | Exception) -> None:
+    def __init__(self, result: FetchResult | BaseException) -> None:
         self.result = result
         self.fetch_count = 0
 
     def fetch(self, client: httpx.Client) -> FetchResult:
         self.fetch_count += 1
-        if isinstance(self.result, Exception):
+        if isinstance(self.result, BaseException):
             raise self.result
         return self.result
 
@@ -162,10 +163,12 @@ def test_collect_source_records_each_successful_run(db_session: Session) -> None
 def test_failed_fetch_is_recorded_and_raised_again(db_session: Session, error: Exception) -> None:
     adapter = FakeAdapter(error)
 
-    with httpx.Client() as client, pytest.raises(type(error)):
+    with httpx.Client() as client, pytest.raises(CollectError) as failure:
         collect_source(adapter, client=client, session=db_session)
 
+    assert failure.value.error is error
     [run] = runs(db_session)
+    assert failure.value.run_id == run.id
     assert run.status == "failed"
     assert run.error_type == type(error).__name__
     assert run.error == str(error)
@@ -176,7 +179,7 @@ def test_failed_fetch_is_recorded_and_raised_again(db_session: Session, error: E
 def test_long_error_message_is_truncated(db_session: Session) -> None:
     adapter = FakeAdapter(FeedError("x" * 5000))
 
-    with httpx.Client() as client, pytest.raises(FeedError):
+    with httpx.Client() as client, pytest.raises(CollectError):
         collect_source(adapter, client=client, session=db_session)
 
     [run] = runs(db_session)
@@ -187,9 +190,9 @@ def test_dry_run_records_the_request_without_storing_items(db_session: Session) 
     adapter = FakeAdapter(FetchResult(items=ITEMS, skipped=1))
 
     with httpx.Client() as client:
-        result = dry_run_source(adapter, client=client, session=db_session)
+        outcome = dry_run_source(adapter, client=client, session=db_session)
 
-    assert len(result.items) == 5
+    assert outcome == DryRunStats(source="fake", fetched=5, skipped=1)
     [run] = runs(db_session)
     assert (run.status, run.fetched, run.skipped, run.inserted) == ("dry_run", 5, 1, None)
     assert stored(db_session) == {}
@@ -198,7 +201,7 @@ def test_dry_run_records_the_request_without_storing_items(db_session: Session) 
 def test_failed_dry_run_is_recorded_as_failed(db_session: Session) -> None:
     adapter = FakeAdapter(FeedError("not an RSS feed"))
 
-    with httpx.Client() as client, pytest.raises(FeedError):
+    with httpx.Client() as client, pytest.raises(CollectError):
         dry_run_source(adapter, client=client, session=db_session)
 
     assert [run.status for run in runs(db_session)] == ["failed"]
@@ -346,3 +349,136 @@ def test_lock_is_released_when_the_transaction_ends(
     assert other_collector.scalar(
         select(func.pg_try_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext("fake")))
     )
+
+
+# The attempt is recorded before the request: whatever fails after it, the
+# request still counts against the source's `min_interval`.
+
+
+def test_storage_error_after_the_request_still_counts_as_an_attempt(
+    db_session: Session, client: httpx.Client
+) -> None:
+    # Postgres rejects \u0000 in JSONB, so the fetch succeeds and the upsert fails.
+    item = RawItem(external_id="1", url="https://fake.example/1", payload={"title": "a\u0000b"})
+    adapter = FakeAdapter(FetchResult(items=[item]))
+    now = datetime.now(UTC)
+
+    with pytest.raises(CollectError) as failure:
+        collect_if_due(adapter, client=client, session=db_session, now=now)
+
+    [run] = runs(db_session)
+    assert failure.value.run_id == run.id
+    assert (run.status, run.error_type) == ("failed", "DataError")
+    assert run.finished_at is not None
+    assert stored(db_session) == {}
+    again = collect_if_due(adapter, client=client, session=db_session, now=now)
+    assert again == Skipped(source="fake", reason="min_interval", last_attempt_at=run.started_at)
+    assert adapter.fetch_count == 1
+
+
+def test_any_error_in_the_fetch_is_recorded(db_session: Session, client: httpx.Client) -> None:
+    adapter = FakeAdapter(ValueError("parser bug"))
+
+    with pytest.raises(CollectError) as failure:
+        collect_if_due(adapter, client=client, session=db_session, now=datetime.now(UTC))
+
+    assert isinstance(failure.value.error, ValueError)
+    [run] = runs(db_session)
+    assert (run.status, run.error_type, run.error) == ("failed", "ValueError", "parser bug")
+
+
+def test_interrupted_attempt_stays_running_and_still_counts(
+    db_session: Session, client: httpx.Client
+) -> None:
+    adapter = FakeAdapter(KeyboardInterrupt())
+    now = datetime.now(UTC)
+
+    with pytest.raises(KeyboardInterrupt):
+        collect_if_due(adapter, client=client, session=db_session, now=now)
+
+    [run] = runs(db_session)
+    assert (run.status, run.finished_at) == ("running", None)
+    again = collect_if_due(adapter, client=client, session=db_session, now=now)
+    assert isinstance(again, Skipped)
+    assert again.reason == "min_interval"
+
+
+def test_no_transaction_is_open_during_the_request(
+    db_session: Session, client: httpx.Client
+) -> None:
+    seen: list[bool] = []
+
+    class WatchingAdapter(FakeAdapter):
+        def fetch(self, client: httpx.Client) -> FetchResult:
+            seen.append(db_session.in_transaction())
+            return super().fetch(client)
+
+    collect_if_due(
+        WatchingAdapter(FetchResult(items=ITEMS)),
+        client=client,
+        session=db_session,
+        now=datetime.now(UTC),
+    )
+
+    assert seen == [False]
+
+
+def test_retry_of_the_latest_attempt_ignores_the_min_interval(
+    db_session: Session, client: httpx.Client
+) -> None:
+    adapter = FakeAdapter(httpx.ConnectError("connection refused"))
+    now = datetime.now(UTC)
+    with pytest.raises(CollectError) as failure:
+        collect_if_due(adapter, client=client, session=db_session, now=now)
+    adapter.result = FetchResult(items=ITEMS)
+
+    outcome = collect_if_due(
+        adapter, client=client, session=db_session, now=now, retry_of=failure.value.run_id
+    )
+
+    assert isinstance(outcome, CollectStats)
+    assert [run.status for run in runs(db_session)] == ["failed", "ok"]
+
+
+def test_retry_of_an_older_attempt_sends_no_request(
+    db_session: Session, client: httpx.Client
+) -> None:
+    # A retry message delivered twice, or after another collector's attempt.
+    adapter = FakeAdapter(httpx.ConnectError("connection refused"))
+    now = datetime.now(UTC)
+    with pytest.raises(CollectError) as failure:
+        collect_if_due(adapter, client=client, session=db_session, now=now)
+    adapter.result = FetchResult(items=ITEMS)
+    first_retry = failure.value.run_id
+    collect_if_due(adapter, client=client, session=db_session, now=now, retry_of=first_retry)
+    latest = runs(db_session)[-1]
+
+    outcome = collect_if_due(
+        adapter, client=client, session=db_session, now=now, retry_of=first_retry
+    )
+
+    assert outcome == Skipped(source="fake", reason="superseded", last_attempt_at=latest.started_at)
+    assert adapter.fetch_count == 2
+
+
+def test_running_attempt_is_visible_to_other_collectors(
+    committed_database: Engine, client: httpx.Client
+) -> None:
+    # `db_session` never really commits, so this test commits for real.
+    visible: list[str] = []
+
+    class WatchingAdapter(FakeAdapter):
+        def fetch(self, client: httpx.Client) -> FetchResult:
+            with committed_database.connect() as other:
+                visible.extend(other.scalars(select(CollectRun.status)))
+            return super().fetch(client)
+
+    with Session(committed_database) as session:
+        collect_if_due(
+            WatchingAdapter(FetchResult(items=[])),
+            client=client,
+            session=session,
+            now=datetime.now(UTC),
+        )
+
+    assert visible == ["running"]

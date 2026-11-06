@@ -77,6 +77,11 @@ class RawVacancy(Base):
 class CollectRun(Base):
     """One attempt to collect one source, successful or not.
 
+    The row is committed as `running` before the request is sent, so every
+    request is counted even if the collector fails or dies after sending it.
+    It then becomes `ok`, `failed` or `dry_run`. A run left `running` was
+    interrupted and has no `finished_at`.
+
     A run with `status = 'ok'` carries the counts from `CollectStats`. A failed
     run carries the error instead. A `dry_run` fetched the source without
     storing items, so it has only `fetched` and `skipped`. Every status counts
@@ -87,7 +92,8 @@ class CollectRun(Base):
 
     __tablename__ = "collect_run"
     __table_args__ = (
-        CheckConstraint("status IN ('ok', 'failed', 'dry_run')", name="status"),
+        CheckConstraint("status IN ('running', 'ok', 'failed', 'dry_run')", name="status"),
+        CheckConstraint("(status = 'running') = (finished_at IS NULL)", name="finished"),
         Index("ix_collect_run_source_id_started_at", "source_id", "started_at"),
     )
 
@@ -97,7 +103,7 @@ class CollectRun(Base):
     # run's duration. A server-side `now()` would be the transaction start time
     # on another machine's clock.
     started_at: Mapped[datetime]
-    finished_at: Mapped[datetime]
+    finished_at: Mapped[datetime | None]
     status: Mapped[str] = mapped_column(String(16))
     fetched: Mapped[int | None]
     skipped: Mapped[int | None]

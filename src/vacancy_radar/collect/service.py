@@ -4,25 +4,28 @@ Idempotency is enforced by the database: `raw_vacancy` is unique on
 `(source_id, external_id)`, and every write is an `INSERT … ON CONFLICT`.
 Collecting the same feed twice leaves the table as it was after the first run.
 
-Every attempt, successful or not, is also recorded in `collect_run`.
+Every attempt, successful or not, is also recorded in `collect_run`. The run is
+committed as `running` before the request is sent and finished afterwards, so a
+request counts against the source's `min_interval` whatever fails after it.
 
 `collect_if_due` is the entry point for every scheduler (the CLI and the Celery
 task): it applies the kill switch, the per-source lock and `min_interval`
 before any request is sent.
 """
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
-from sqlalchemy import func, literal_column, select
+from sqlalchemy import func, literal_column, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from vacancy_radar.db.models import CollectRun, RawVacancy, Source
-from vacancy_radar.sources.base import FeedError, FetchResult, RawItem, SourceAdapter
+from vacancy_radar.sources.base import RawItem, SourceAdapter
 
 # Enough to identify the failure; a long HTML error page is not worth storing.
 MAX_ERROR_LENGTH = 1000
@@ -60,7 +63,7 @@ class DryRunStats:
     skipped: int
 
 
-SkipReason = Literal["disabled", "busy", "min_interval"]
+SkipReason = Literal["disabled", "busy", "min_interval", "superseded"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +72,8 @@ class Skipped:
 
     `disabled`: listed in `DISABLED_SOURCES`. `busy`: another collector holds
     the source's lock right now. `min_interval`: requested too recently.
+    `superseded`: a retry whose failed attempt is no longer the source's latest,
+    because another attempt was made since (or the retry was delivered twice).
     """
 
     source: str
@@ -77,6 +82,21 @@ class Skipped:
 
 
 CollectOutcome = CollectStats | DryRunStats | Skipped
+
+
+class CollectError(Exception):
+    """An attempt failed after its run was recorded as `failed`.
+
+    `error` is what went wrong: a network or HTTP error, an unparsable feed, a
+    database error while storing the items, or anything else. `run_id` is the
+    failed run, which a retry passes back to `collect_if_due` as `retry_of`.
+    """
+
+    def __init__(self, run_id: int, error: Exception) -> None:
+        super().__init__(f"{type(error).__name__}: {error}")
+        self.run_id = run_id
+        self.error = error
+
 
 # First key of the two-key advisory lock: keeps collection locks apart from
 # any other advisory lock the application may take later.
@@ -157,18 +177,56 @@ def is_due(session: Session, adapter: SourceAdapter, *, now: datetime) -> bool:
     return last is None or now - last >= adapter.min_interval
 
 
+def latest_attempt_id(session: Session, adapter: SourceAdapter) -> int | None:
+    """The id of the source's latest run.
+
+    Runs are started under the source's lock, so a later run has a larger id.
+    """
+    return session.scalar(
+        select(func.max(CollectRun.id))
+        .join(Source, Source.id == CollectRun.source_id)
+        .where(Source.slug == adapter.slug)
+    )
+
+
 def try_lock_source(session: Session, adapter: SourceAdapter) -> bool:
     """Take the source's collection lock for the rest of the transaction.
 
     Returns False at once if another transaction holds it. Without the lock,
     two collectors started together (a scheduled task and a retry, say) would
-    both find the source due and both request it. Postgres releases the lock
-    on commit or rollback, so a crashed collector never leaves it behind.
+    both find the source due and both start a run. The lock is held only from
+    the due check until the new `running` run is committed: from then on the
+    run itself makes the source not due. Postgres releases the lock on commit
+    or rollback, so a crashed collector never leaves it behind.
     """
     locked = session.scalar(
         select(func.pg_try_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext(adapter.slug)))
     )
     return bool(locked)
+
+
+def check_due(
+    session: Session, adapter: SourceAdapter, *, now: datetime, retry_of: int | None
+) -> Skipped | None:
+    """None if the source may be requested now, or why it may not.
+
+    A scheduled run waits for `min_interval`. A retry (`retry_of`, the id of
+    the failed run it repeats) does not, because that failed run would make it
+    wait the full interval. It may run only while its failed run is still the
+    latest one, so a retry delivered twice, or one that another collector got
+    ahead of, sends no request.
+    """
+    if retry_of is None:
+        if is_due(session, adapter, now=now):
+            return None
+        reason: SkipReason = "min_interval"
+    else:
+        if latest_attempt_id(session, adapter) == retry_of:
+            return None
+        reason = "superseded"
+    return Skipped(
+        source=adapter.slug, reason=reason, last_attempt_at=last_attempt_at(session, adapter)
+    )
 
 
 def collect_if_due(
@@ -179,32 +237,27 @@ def collect_if_due(
     now: datetime,
     disabled: Collection[str] = frozenset(),
     dry_run: bool = False,
-    is_retry: bool = False,
+    retry_of: int | None = None,
 ) -> CollectOutcome:
     """Collect one source unless it is disabled, locked, or not due yet.
 
-    The checks run in that order. The lock is taken before the due check, so
-    the check and the request it allows happen while no other collector can
-    request the same source. Fetch errors propagate as in `collect_source`.
+    The checks run in that order. The lock is taken before the due check and
+    held until the new run is committed, so no other collector can start a
+    run for the same source in between. A failed attempt raises
+    `CollectError`, as in `collect_source`.
 
-    A retry of a failed request (`is_retry`) skips only the due check: the
-    failed request it repeats was recorded and would make it wait the full
-    `min_interval`. How many retries a source gets is `adapter.max_retries`.
+    `retry_of` marks a retry of that failed run: see `check_due`. How many
+    retries a source gets is `adapter.max_retries`.
     """
     if adapter.slug in disabled:
         return Skipped(source=adapter.slug, reason="disabled")
     if not try_lock_source(session, adapter):
         return Skipped(source=adapter.slug, reason="busy")
-    if not is_retry and not is_due(session, adapter, now=now):
-        return Skipped(
-            source=adapter.slug,
-            reason="min_interval",
-            last_attempt_at=last_attempt_at(session, adapter),
-        )
+    if (skipped := check_due(session, adapter, now=now, retry_of=retry_of)) is not None:
+        return skipped
 
     if dry_run:
-        result = dry_run_source(adapter, client=client, session=session)
-        return DryRunStats(source=adapter.slug, fetched=len(result.items), skipped=result.skipped)
+        return dry_run_source(adapter, client=client, session=session)
     return collect_source(adapter, client=client, session=session)
 
 
@@ -226,29 +279,28 @@ def describe(outcome: CollectOutcome) -> tuple[str, dict[str, object]]:
 def collect_source(
     adapter: SourceAdapter, *, client: httpx.Client, session: Session
 ) -> CollectStats:
-    """Fetch one source, store its items and record the run in one transaction.
+    """Request one source, store its items and finish its run, without any checks.
 
-    A failed fetch is recorded as a `failed` run and committed, then the error
-    is raised again so the caller still sees it.
+    The run is committed as `running` first. The items and the finished run
+    are then written in one transaction. On any error the run is finished as
+    `failed` and `CollectError` is raised.
     """
-    started_at = datetime.now(UTC)
-    result = fetch_or_record_failure(adapter, client=client, session=session, started_at=started_at)
-
     source_id = ensure_source(session, adapter)
-    counts = upsert_raw_items(session, source_id, result.items)
-    stats = CollectStats(
-        source=adapter.slug,
-        fetched=len(result.items),
-        skipped=result.skipped,
-        inserted=counts.inserted,
-        updated=counts.updated,
-        unchanged=counts.unchanged,
-    )
-    session.add(
-        CollectRun(
-            source_id=source_id,
-            started_at=started_at,
-            finished_at=datetime.now(UTC),
+    run_id = start_run(session, source_id)
+    with failing_run(session, run_id):
+        result = adapter.fetch(client)
+        counts = upsert_raw_items(session, source_id, result.items)
+        stats = CollectStats(
+            source=adapter.slug,
+            fetched=len(result.items),
+            skipped=result.skipped,
+            inserted=counts.inserted,
+            updated=counts.updated,
+            unchanged=counts.unchanged,
+        )
+        finish_run(
+            session,
+            run_id,
             status="ok",
             fetched=stats.fetched,
             skipped=stats.skipped,
@@ -256,51 +308,68 @@ def collect_source(
             updated=stats.updated,
             unchanged=stats.unchanged,
         )
-    )
-    session.commit()
+        session.commit()
     return stats
 
 
 def dry_run_source(
     adapter: SourceAdapter, *, client: httpx.Client, session: Session
-) -> FetchResult:
-    """Fetch and parse one source without storing its items.
+) -> DryRunStats:
+    """Request and parse one source without storing its items.
 
     The request is still recorded as a `dry_run` run, because it counts
     against the source's `min_interval` like any other request.
     """
-    started_at = datetime.now(UTC)
-    result = fetch_or_record_failure(adapter, client=client, session=session, started_at=started_at)
-    session.add(
-        CollectRun(
-            source_id=ensure_source(session, adapter),
-            started_at=started_at,
-            finished_at=datetime.now(UTC),
-            status="dry_run",
-            fetched=len(result.items),
-            skipped=result.skipped,
-        )
-    )
-    session.commit()
-    return result
-
-
-def fetch_or_record_failure(
-    adapter: SourceAdapter, *, client: httpx.Client, session: Session, started_at: datetime
-) -> FetchResult:
-    """Fetch the source. On failure, record a `failed` run, commit and raise again."""
-    try:
-        return adapter.fetch(client)
-    except (httpx.HTTPError, FeedError) as exc:
-        session.add(
-            CollectRun(
-                source_id=ensure_source(session, adapter),
-                started_at=started_at,
-                finished_at=datetime.now(UTC),
-                status="failed",
-                error_type=type(exc).__name__,
-                error=str(exc)[:MAX_ERROR_LENGTH],
-            )
+    run_id = start_run(session, ensure_source(session, adapter))
+    with failing_run(session, run_id):
+        result = adapter.fetch(client)
+        finish_run(
+            session, run_id, status="dry_run", fetched=len(result.items), skipped=result.skipped
         )
         session.commit()
-        raise
+    return DryRunStats(source=adapter.slug, fetched=len(result.items), skipped=result.skipped)
+
+
+def start_run(session: Session, source_id: int) -> int:
+    """Commit a `running` run before the request is sent, and return its id.
+
+    The commit ends the transaction, so none is held open during the request.
+    """
+    run = CollectRun(source_id=source_id, started_at=datetime.now(UTC), status="running")
+    session.add(run)
+    session.flush()
+    run_id = run.id
+    session.commit()
+    return run_id
+
+
+def finish_run(session: Session, run_id: int, *, status: str, **fields: int | str | None) -> None:
+    """Set the run's final status and fields. The caller commits."""
+    session.execute(
+        update(CollectRun)
+        .where(CollectRun.id == run_id)
+        .values(status=status, finished_at=datetime.now(UTC), **fields)
+    )
+
+
+@contextmanager
+def failing_run(session: Session, run_id: int) -> Iterator[None]:
+    """On any error inside, finish the run as `failed` and raise `CollectError`.
+
+    The failed transaction is rolled back first, so nothing it wrote is kept.
+    If the database cannot record the failure either, that error propagates
+    and the run stays `running`, which still counts as a request.
+    """
+    try:
+        yield
+    except Exception as exc:
+        session.rollback()
+        finish_run(
+            session,
+            run_id,
+            status="failed",
+            error_type=type(exc).__name__,
+            error=str(exc)[:MAX_ERROR_LENGTH],
+        )
+        session.commit()
+        raise CollectError(run_id, exc) from exc
