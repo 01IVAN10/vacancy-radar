@@ -60,7 +60,16 @@ select = [
 known-first-party = ["vacancy_radar", "tests"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"] # assert is how pytest works
+# Vacancy texts are Ukrainian and use typographic dashes, so parsers and their
+# tests are full of Cyrillic letters and en dashes that RUF001-003 flag as
+# look-alikes of ASCII characters.
+"src/vacancy_radar/domain/**" = ["RUF001", "RUF002", "RUF003"]
+"tests/**" = [
+    "S101",   # assert is how pytest works
+    "RUF001", # see domain/ above
+    "RUF002",
+    "RUF003",
+]
 
 [tool.mypy]
 python_version = "3.12"

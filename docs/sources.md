@@ -88,7 +88,7 @@ The all-jobs feed covers only ~2.5 h at weekday peak, so a poll interval of more
 | `pubDate` | RFC 822 with Kyiv offset (`+0200` / `+0300` across DST) | Published-at |
 | `category` ×2 | 1st: primary keyword (`Python`); 2nd: always empty | Category |
 
-**Missing from the feed:** company, structured salary, location, experience, English level, remote flag. Salary appears only in free text, in ~1 of 4 descriptions, and money amounts that are not salaries also occur (e.g. company donation totals).
+**Missing from the feed:** company, structured salary, location, experience, English level, remote flag. Salary appears only in free text, and rarely: `find_salary` (`domain/salary.py`) found one in 26 of 435 collected descriptions (2026-11-06). Money amounts that are not salaries are more common than salaries: ad budgets, donation totals, deal sizes, referral bonuses. The ~1 in 4 from the first sample most likely counted every amount (about 1 in 5 descriptions mention money at all).
 
 ### Quirks
 
