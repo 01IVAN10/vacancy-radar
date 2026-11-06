@@ -74,7 +74,7 @@ The page says nothing about RSS, automated access to public job posts, or reuse 
 | All jobs | 100 | 2.5 h (Thu 13:45–16:12 Kyiv) | ~40 items/h at peak |
 | `Python` | 100 | 28 days | ~3.6 items/day |
 
-The all-jobs feed covers only ~2.5 h at weekday peak, so a poll interval of more than ~75 min (half the window) risks missing items. **Recommendation:** poll the all-jobs feed every **30 min**. That is 48 requests/day and leaves a buffer for GitHub Actions cron delays. Implemented as `min_interval = 25 min` on a 15-minute schedule: the collector skips Djinni until 25 minutes have passed since its last request, so it is fetched about every 30 minutes even when cron runs late or early. These figures come from one sample. Stage 3 must verify them by logging how many items each run shares with the previous run: zero overlap means items were missed.
+The all-jobs feed covers only ~2.5 h at weekday peak, so a poll interval of more than ~75 min (half the window) risks missing items. **Recommendation:** poll the all-jobs feed every **30 min**. That is 48 requests/day and leaves a buffer for GitHub Actions cron delays. Implemented as `min_interval = 25 min` on a job started every ~7.5 minutes (two 15-minute triggers, see [Triggers](collection.md#triggers)): the collector skips Djinni until 25 minutes have passed since its last request, so it is fetched about every 30 minutes even when cron runs late or early. These figures come from one sample. Stage 3 must verify them by logging how many items each run shares with the previous run: zero overlap means items were missed.
 
 ### Fields
 
@@ -124,7 +124,7 @@ The consent covers **only** the conditions proposed in the request. Each one is 
 
 **What this means for implementation:**
 
-- **Rate limit:** `DouAdapter.min_interval` is 30 min. Before each fetch the collector reads the last request time from `collect_run`, and failed and dry runs count as requests too. A retry inside the window would break condition 1, so a failed DOU fetch waits until the next due cycle instead of being retried with backoff. The 15-minute schedule therefore fetches DOU every 30–45 minutes. Stage 4's Celery retries must keep this rule.
+- **Rate limit:** `DouAdapter.min_interval` is 30 min. Before each fetch the collector reads the last request time from `collect_run`, and failed and dry runs count as requests too. A retry inside the window would break condition 1, so a failed DOU fetch waits until the next due cycle instead of being retried with backoff. With the job started every ~7.5 minutes, DOU is therefore fetched every 30–38 minutes. Stage 4's Celery retries must keep this rule.
 - **Kill switch:** the `DISABLED_SOURCES` setting (`DISABLED_SOURCES=dou`) stops a source without a code change (condition 6). In the scheduled collection it is a GitHub repository variable. Naming the source on the command line does not override it.
 - **Attribution:** vacancy cards and `/analytics` show "Source: DOU" with a link (conditions 3–4).
 - **User-Agent:** the version is part of the agreed string. Keep `0.1` for DOU, or tell DOU when it changes.
@@ -169,7 +169,7 @@ The terms never mention RSS. An RSS client is automated software, so publishing 
 | Format | RSS 2.0, `application/rss+xml; charset=utf-8`, behind Cloudflare |
 | Caching | `Cache-Control: max-age=600`, `Last-Modified`. `If-Modified-Since` still returns `200` with the full body. Polling more often than every 10 min is pointless |
 
-**Feed size:** all-jobs feed 50 items over **1.7 h** (Thu 14:25–16:06 Kyiv, ~30 items/h). `Python` feed 25 items over ~6 days. Interval: every 30 min for the all-jobs feed. This is also the minimum the consent allows, so re-measuring once collection starts can only make it longer. A request with the project User-Agent from a residential connection on 2026-11-06 returned `200` through Cloudflare. GitHub Actions runners use datacenter IPs, so the first scheduled run is what shows whether they pass too. If they get `403`, set `DISABLED_SOURCES=dou` and wait for the VPS rather than work around the challenge.
+**Feed size:** all-jobs feed 50 items over **1.7 h** (Thu 14:25–16:06 Kyiv, ~30 items/h). `Python` feed 25 items over ~6 days. Interval: every 30 min for the all-jobs feed. This is also the minimum the consent allows, so re-measuring once collection starts can only make it longer. A request with the project User-Agent from a residential connection on 2026-11-06 returned `200` through Cloudflare. GitHub Actions runners use datacenter IPs, and their requests passed too, starting with the first run on 2026-11-05. If they start getting `403`, set `DISABLED_SOURCES=dou` and wait for the VPS rather than work around the challenge. A window that is mostly night is still too long: on 2026-11-06 a 7 h 13 min gap (04:40–11:53 Kyiv) shared no items with the previous run, so missed runs lose DOU vacancies (see [Triggers](collection.md#triggers)).
 
 ### Fields
 

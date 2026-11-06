@@ -13,9 +13,24 @@ docker run --rm -i -e PGURL="$(sed -n 's/^DATABASE_URL=//p' .env.neon | sed 's/+
   postgres:16 sh -c 'psql "$PGURL"' < query.sql
 ```
 
+## Triggers
+
+The workflow has two triggers. cron-job.org calls the `workflow_dispatch` API at minutes 7, 22, 37, and 52 of every hour, and GitHub's `schedule` fires at minutes 2, 17, 32, and 47 as a backup. Setup is in the README, under [Trigger](../README.md#trigger). `gh run list --workflow collect.yml` shows which trigger started each run in its event column.
+
+GitHub's `schedule` alone was not enough. From the first run on 2026-11-05 22:08 UTC to 2026-11-06 12:09 UTC, about 56 scheduled slots passed and only 2 runs started:
+
+| Run (UTC) | Trigger | Djinni new / already stored | DOU new / already stored | Gap |
+|---|---|---|---|---|
+| 11-05 22:08 / 22:21 | manual | 2 / 98 | 50 / 0 (first run) | |
+| 11-06 02:40 | schedule | 2 / 98 | 1 / 49 | ~4.5 h |
+| 11-06 09:53 | schedule | 90 / 10 | **50 / 0** | 7 h 13 min |
+| 11-06 12:33 | first cron-job.org dispatch | 89 / 11 | **50 / 0** | 2 h 40 min |
+
+The DOU runs at 09:53 and 12:33 shared no items with the previous run, so the feed moved past vacancies that were never stored. Even a daytime gap of under 3 hours is too long for DOU. Djinni overlapped by only 10–11 items, so it was close to missing items too.
+
 ## Runs per day
 
-The schedule runs every 15 minutes, and each source is fetched only when its `min_interval` has passed. Expect about 48 `ok` runs per day for Djinni (every ~30 minutes) and 32–48 for DOU (every 30–45 minutes). Runs skipped as not due leave no row.
+The triggers start the job about every 7.5 minutes, and each source is fetched only when its `min_interval` has passed. Expect about 48 `ok` runs per day for Djinni (every ~30 minutes) and 38–48 for DOU (every 30–38 minutes). Runs skipped as not due leave no row.
 
 ```sql
 SELECT s.slug,
