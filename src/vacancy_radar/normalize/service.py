@@ -1,4 +1,4 @@
-"""Normalize the raw items that have no up-to-date `vacancy` row.
+"""Normalize the raw items that have no up-to-date `vacancy` row, then convert salaries.
 
 A raw item is pending when it has no vacancy yet, when its payload changed
 since (`raw_vacancy.updated_at` no longer equals `vacancy.raw_updated_at`),
@@ -7,6 +7,11 @@ or a newer one after a rollback). Pending items
 are processed in batches, one transaction each, and written with
 `INSERT … ON CONFLICT (raw_vacancy_id) DO UPDATE`, so a second run changes
 nothing and two runs at once only repeat each other's work.
+
+Normalization needs no network. A salary in dollars gets its monthly USD
+range right away; one in hryvnias or euros gets it from `convert_salaries`,
+which needs NBU rates. So an NBU outage leaves only those dollar columns
+empty, and the next run fills them.
 """
 
 import time
@@ -16,7 +21,7 @@ from datetime import date, datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import Row, delete, func, or_, select
+from sqlalchemy import Row, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -29,8 +34,9 @@ from vacancy_radar.domain.normalize import (
     kyiv_date,
     normalize,
 )
+from vacancy_radar.domain.salary import Salary
 from vacancy_radar.domain.skills import SKILLS
-from vacancy_radar.exchange.rates import RateTable, ensure_rates
+from vacancy_radar.exchange.rates import ensure_rates
 
 BATCH_SIZE = 500
 
@@ -41,39 +47,74 @@ class NormalizeStats:
 
     normalized: int = 0
     with_salary: int = 0
-    with_usd: int = 0
 
     def __add__(self, other: "NormalizeStats") -> "NormalizeStats":
         return NormalizeStats(
-            self.normalized + other.normalized,
-            self.with_salary + other.with_salary,
-            self.with_usd + other.with_usd,
+            self.normalized + other.normalized, self.with_salary + other.with_salary
         )
 
 
 def normalize_pending(
-    session: Session,
-    client: httpx.Client,
-    *,
-    rebuild: bool = False,
-    batch_size: int = BATCH_SIZE,
-    sleep: Callable[[float], None] = time.sleep,
+    session: Session, *, rebuild: bool = False, batch_size: int = BATCH_SIZE
 ) -> NormalizeStats:
-    """Normalize every pending raw item, or every raw item with `rebuild`.
-
-    Errors from NBU propagate. The batch that hit one is rolled back, and its
-    items stay pending for the next run; earlier batches stay committed.
-    """
+    """Normalize every pending raw item, or every raw item with `rebuild`. Commits."""
     sync_skills(session)
     session.commit()
 
     stats = NormalizeStats()
     last_id = 0
     while batch := pending_batch(session, after_id=last_id, rebuild=rebuild, limit=batch_size):
-        stats += normalize_batch(session, client, batch, sleep=sleep)
+        stats += normalize_batch(session, batch)
         session.commit()
         last_id = batch[-1].id
     return stats
+
+
+def convert_salaries(
+    session: Session, client: httpx.Client, *, sleep: Callable[[float], None] = time.sleep
+) -> int:
+    """Fill the monthly USD range of every salary that still lacks one. Commits.
+
+    Returns how many vacancies got one. Errors from NBU propagate and nothing
+    is written; the salaries stay unconverted for the next run. So does a
+    salary whose day has no rate and no recent earlier one.
+    """
+    rows = session.execute(
+        select(
+            Vacancy.id,
+            Vacancy.salary_min,
+            Vacancy.salary_max,
+            Vacancy.salary_currency,
+            Vacancy.salary_period,
+            Vacancy.published_at,
+            RawVacancy.first_seen_at,
+        )
+        .join(RawVacancy, RawVacancy.id == Vacancy.raw_vacancy_id)
+        .where(
+            Vacancy.salary_currency != "USD",
+            Vacancy.salary_period != "hour",
+            Vacancy.salary_usd_min.is_(None),
+            Vacancy.salary_usd_max.is_(None),
+        )
+    ).all()
+    if not rows:
+        return 0
+
+    rates = ensure_rates(
+        session, client, {rate_day(r.published_at, r.first_seen_at) for r in rows}, sleep=sleep
+    )
+    converted = []
+    for row in rows:
+        salary = Salary(row.salary_min, row.salary_max, row.salary_currency, row.salary_period)
+        usd_min, usd_max = to_monthly_usd(
+            salary, rates.get(rate_day(row.published_at, row.first_seen_at))
+        )
+        if usd_min is not None or usd_max is not None:
+            converted.append({"id": row.id, "salary_usd_min": usd_min, "salary_usd_max": usd_max})
+    if converted:
+        session.execute(update(Vacancy), converted)
+    session.commit()
+    return len(converted)
 
 
 def sync_skills(session: Session) -> None:
@@ -121,24 +162,9 @@ def pending_batch(
     return session.execute(query).all()
 
 
-def normalize_batch(
-    session: Session,
-    client: httpx.Client,
-    batch: Sequence[Row[Any]],
-    *,
-    sleep: Callable[[float], None] = time.sleep,
-) -> NormalizeStats:
+def normalize_batch(session: Session, batch: Sequence[Row[Any]]) -> NormalizeStats:
     """Normalize one batch and upsert its vacancies. Does not commit."""
-    normalized = [(row, normalize(row.slug, row.payload)) for row in batch]
-    # Only salaries in other currencies need a rate, so most batches need none.
-    days = {
-        rate_day(vacancy, row.first_seen_at)
-        for row, vacancy in normalized
-        if vacancy.salary is not None and vacancy.salary.currency != "USD"
-    }
-    rates = ensure_rates(session, client, days, sleep=sleep) if days else {}
-
-    values = [vacancy_values(row, vacancy, rates) for row, vacancy in normalized]
+    values = [vacancy_values(row, normalize(row.slug, row.payload)) for row in batch]
     insert_values = insert(Vacancy).values(values)
     session.execute(
         insert_values.on_conflict_do_update(
@@ -154,25 +180,22 @@ def normalize_batch(
     return NormalizeStats(
         normalized=len(values),
         with_salary=sum(v["salary_currency"] is not None for v in values),
-        with_usd=sum(
-            v["salary_usd_min"] is not None or v["salary_usd_max"] is not None for v in values
-        ),
     )
 
 
-def rate_day(vacancy: NormalizedVacancy, first_seen_at: datetime) -> date:
+def rate_day(published_at: datetime | None, first_seen_at: datetime) -> date:
     """The Kyiv day whose rate converts the salary: publication, else first sight."""
-    return kyiv_date(vacancy.published_at or first_seen_at)
+    return kyiv_date(published_at or first_seen_at)
 
 
-def vacancy_values(row: Row[Any], vacancy: NormalizedVacancy, rates: RateTable) -> dict[str, Any]:
-    """Column values of the `vacancy` row for one raw item."""
+def vacancy_values(row: Row[Any], vacancy: NormalizedVacancy) -> dict[str, Any]:
+    """Column values of the `vacancy` row for one raw item.
+
+    Without rates, only a salary in dollars gets its USD range here; the
+    others are left to `convert_salaries`.
+    """
     salary = vacancy.salary
-    usd_min, usd_max = (
-        to_monthly_usd(salary, rates.get(rate_day(vacancy, row.first_seen_at)))
-        if salary is not None
-        else (None, None)
-    )
+    usd_min, usd_max = to_monthly_usd(salary, rates=None) if salary else (None, None)
     return {
         "raw_vacancy_id": row.id,
         "source_id": row.source_id,

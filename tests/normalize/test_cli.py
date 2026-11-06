@@ -38,9 +38,10 @@ def vacancy_count(engine: Engine) -> int:
         return connection.scalar(select(func.count()).select_from(Vacancy)) or 0
 
 
-def last_event(stderr: str) -> dict[str, Any]:
-    event: dict[str, Any] = json.loads(stderr.splitlines()[-1])
-    return event
+def events(stderr: str) -> dict[str, dict[str, Any]]:
+    """The logged events by name."""
+    parsed = [json.loads(line) for line in stderr.splitlines()]
+    return {event["event"]: event for event in parsed}
 
 
 def mock_nbu(router: respx.MockRouter) -> None:
@@ -56,16 +57,20 @@ def test_normalizes_pending_items_and_logs_the_counts(
     mock_nbu(respx_mock)
 
     assert main([]) == 0
-    first = last_event(capsys.readouterr().err)
+    first = events(capsys.readouterr().err)
     assert main([]) == 0
-    second = last_event(capsys.readouterr().err)
+    second = events(capsys.readouterr().err)
 
-    assert (first["event"], first["normalized"], first["with_salary"]) == (
-        "normalize.finished",
+    assert (
+        first["normalize.finished"]["normalized"],
+        first["normalize.finished"]["with_salary"],
+    ) == (
         5,
         2,
     )
-    assert second["normalized"] == 0
+    assert first["normalize.converted"]["converted"] == 1
+    assert second["normalize.finished"]["normalized"] == 0
+    assert second["normalize.converted"]["converted"] == 0
     assert vacancy_count(committed_database) == 5
 
 
@@ -76,16 +81,17 @@ def test_rebuild_normalizes_everything_again(
     main([])
 
     assert main(["--rebuild"]) == 0
-    event = last_event(capsys.readouterr().err)
+    event = events(capsys.readouterr().err)["normalize.finished"]
     assert (event["rebuild"], event["normalized"]) == (True, 5)
 
 
-def test_nbu_failure_exits_with_1(
+def test_nbu_failure_exits_with_1_after_normalizing(
     respx_mock: respx.MockRouter, committed_database: Engine, capsys: pytest.CaptureFixture[str]
 ) -> None:
     respx_mock.get(RANGE_URL).respond(503)
 
     assert main([]) == 1
-    event = last_event(capsys.readouterr().err)
-    assert (event["event"], event["error_type"]) == ("normalize.failed", "HTTPStatusError")
-    assert vacancy_count(committed_database) == 0
+    logged = events(capsys.readouterr().err)
+    assert logged["normalize.finished"]["normalized"] == 5
+    assert logged["normalize.conversion_failed"]["error_type"] == "HTTPStatusError"
+    assert vacancy_count(committed_database) == 5

@@ -15,7 +15,7 @@ from vacancy_radar.domain.normalize import NORMALIZER_VERSION
 from vacancy_radar.domain.skills import SKILLS
 from vacancy_radar.exchange.nbu import RANGE_URL
 from vacancy_radar.normalize import service
-from vacancy_radar.normalize.service import NormalizeStats, normalize_pending, pending_batch
+from vacancy_radar.normalize.service import NormalizeStats, convert_salaries, normalize_pending
 from vacancy_radar.sources import ADAPTERS, RawItem, djinni, dou
 from vacancy_radar.sources.http import build_client
 
@@ -38,10 +38,12 @@ def store(session: Session, slug: str, items: list[RawItem]) -> None:
 
 
 def run(session: Session, *, rebuild: bool = False, batch_size: int = 500) -> NormalizeStats:
+    return normalize_pending(session, rebuild=rebuild, batch_size=batch_size)
+
+
+def convert(session: Session) -> int:
     with build_client() as client:
-        return normalize_pending(
-            session, client, rebuild=rebuild, batch_size=batch_size, sleep=lambda _: None
-        )
+        return convert_salaries(session, client, sleep=lambda _: None)
 
 
 def vacancies(session: Session) -> dict[str, Vacancy]:
@@ -57,18 +59,28 @@ def test_normalizes_every_raw_item_once(db_session: Session, nbu: respx.MockRout
     store(db_session, "djinni", DJINNI_ITEMS)
 
     first = run(db_session)
-    calls = nbu.calls.call_count
     second = run(db_session)
 
-    assert first == NormalizeStats(normalized=5, with_salary=2, with_usd=2)
+    assert first == NormalizeStats(normalized=5, with_salary=2)
     assert second == NormalizeStats()
-    assert nbu.calls.call_count == calls == 2  # one UAH salary: USD and EUR rates once
+    assert nbu.calls.call_count == 0  # normalization itself never calls NBU
     assert len(vacancies(db_session)) == 5
+
+
+def test_converts_each_salary_once(db_session: Session, nbu: respx.MockRouter) -> None:
+    store(db_session, "djinni", DJINNI_ITEMS)  # one UAH and one USD salary
+    run(db_session)
+
+    assert convert(db_session) == 1
+    calls = nbu.calls.call_count
+    assert convert(db_session) == 0
+    assert nbu.calls.call_count == calls == 2  # USD and EUR rates, once
 
 
 def test_stores_the_normalized_fields(db_session: Session, nbu: respx.MockRouter) -> None:
     store(db_session, "djinni", DJINNI_ITEMS)
     run(db_session)
+    convert(db_session)
 
     sales = vacancies(db_session)["852239"]  # "40 000 - 60 000 грн", published 2026-11-05
     assert (sales.salary_min, sales.salary_max, sales.salary_currency) == (40_000, 60_000, "UAH")
@@ -84,7 +96,8 @@ def test_usd_salaries_need_no_rates(db_session: Session, nbu: respx.MockRouter) 
 
     stats = run(db_session)
 
-    assert stats == NormalizeStats(normalized=6, with_salary=2, with_usd=2)
+    assert stats == NormalizeStats(normalized=6, with_salary=2)
+    assert convert(db_session) == 0  # already in dollars after normalization
     assert nbu.calls.call_count == 0
     orients = vacancies(db_session)["379090"]
     assert (orients.company, orients.cities, orients.salary_usd_max) == ("Orients", ["Львів"], 2200)
@@ -161,16 +174,41 @@ def test_deleting_a_raw_item_deletes_its_vacancy(
     assert len(vacancies(db_session)) == 5
 
 
-def test_an_nbu_failure_leaves_the_batch_pending(db_session: Session) -> None:
+def test_an_nbu_failure_leaves_salaries_unconverted_until_the_next_run(
+    db_session: Session,
+) -> None:
     store(db_session, "djinni", DJINNI_ITEMS[:1])  # a UAH salary: needs a rate
+    run(db_session)
 
     with respx.mock:
         respx.get(RANGE_URL).respond(503)
         with pytest.raises(Exception, match="503"):
-            run(db_session)
+            convert(db_session)
 
-    assert vacancies(db_session) == {}
-    assert len(pending_batch(db_session, after_id=0, rebuild=False, limit=10)) == 1
+    sales = vacancies(db_session)["852239"]
+    assert sales.salary_min == 40_000  # normalized all the same
+    assert (sales.salary_usd_min, sales.salary_usd_max) == (None, None)
+
+    with respx.mock(assert_all_called=False) as router:
+        for currency in ("usd", "eur"):
+            router.get(RANGE_URL, params={"valcode": currency}).respond(
+                200, content=fixture_bytes(f"nbu/{currency}_20261030_20261107.json")
+            )
+        assert convert(db_session) == 1
+    db_session.refresh(sales)
+    assert (sales.salary_usd_min, sales.salary_usd_max) == (878, 1318)
+
+
+def test_a_rebuilt_salary_is_converted_again(db_session: Session, nbu: respx.MockRouter) -> None:
+    store(db_session, "djinni", DJINNI_ITEMS)
+    run(db_session)
+    convert(db_session)
+
+    run(db_session, rebuild=True)
+
+    assert convert(db_session) == 1
+    sales = vacancies(db_session)["852239"]
+    assert (sales.salary_usd_min, sales.salary_usd_max) == (878, 1318)
 
 
 def test_items_of_sources_without_a_mapping_are_skipped(
