@@ -48,4 +48,4 @@ Source order of preference: official API → RSS → HTML scraping. Scrape HTML 
 - Each feature or fix gets its own branch `feat/<name>`, `fix/<name>`, or `chore/<name>`, then a PR into `main`. Merge only when CI is green.
 - Use Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
 - **Recommend, then wait for confirmation.** When a logical unit of work is finished and tests and linters pass, suggest a commit (proposed message + files), a push, or opening a PR. Run git commit, push, PR creation, and merge only after the author confirms that specific action.
-- Before saying "done", run tests and linters locally (`uv run pytest`, `uv run ruff check .`, `uv run mypy src`) and report the results.
+- Before saying "done", run CI's checks locally (`uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`) and report the results. Plain `uv run mypy` type-checks `tests/` too, as CI does.
