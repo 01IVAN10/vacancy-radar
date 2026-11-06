@@ -36,6 +36,7 @@ class FakeAdapter:
     name = "Fake source"
     base_url = "https://fake.example"
     min_interval = timedelta(minutes=30)
+    max_retries = 0
 
     def __init__(self, result: FetchResult | Exception) -> None:
         self.result = result

@@ -12,7 +12,7 @@ before any request is sent.
 """
 
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -179,18 +179,23 @@ def collect_if_due(
     now: datetime,
     disabled: Collection[str] = frozenset(),
     dry_run: bool = False,
+    is_retry: bool = False,
 ) -> CollectOutcome:
     """Collect one source unless it is disabled, locked, or not due yet.
 
     The checks run in that order. The lock is taken before the due check, so
     the check and the request it allows happen while no other collector can
     request the same source. Fetch errors propagate as in `collect_source`.
+
+    A retry of a failed request (`is_retry`) skips only the due check: the
+    failed request it repeats was recorded and would make it wait the full
+    `min_interval`. How many retries a source gets is `adapter.max_retries`.
     """
     if adapter.slug in disabled:
         return Skipped(source=adapter.slug, reason="disabled")
     if not try_lock_source(session, adapter):
         return Skipped(source=adapter.slug, reason="busy")
-    if not is_due(session, adapter, now=now):
+    if not is_retry and not is_due(session, adapter, now=now):
         return Skipped(
             source=adapter.slug,
             reason="min_interval",
@@ -201,6 +206,21 @@ def collect_if_due(
         result = dry_run_source(adapter, client=client, session=session)
         return DryRunStats(source=adapter.slug, fetched=len(result.items), skipped=result.skipped)
     return collect_source(adapter, client=client, session=session)
+
+
+def describe(outcome: CollectOutcome) -> tuple[str, dict[str, object]]:
+    """The log event and JSON-safe fields for an outcome, shared by the CLI and the task."""
+    match outcome:
+        case Skipped(last_attempt_at=last):
+            return "collect.skipped", {
+                "source": outcome.source,
+                "reason": outcome.reason,
+                "last_attempt_at": last.isoformat() if last else None,
+            }
+        case DryRunStats():
+            return "collect.dry_run", asdict(outcome)
+        case CollectStats():
+            return "collect.finished", asdict(outcome)
 
 
 def collect_source(

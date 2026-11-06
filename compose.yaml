@@ -11,6 +11,10 @@ x-app: &app
     # Inside the Compose network the services are not on localhost.
     DATABASE_URL: postgresql+psycopg://vacancy_radar:vacancy_radar@postgres:5432/vacancy_radar
     REDIS_URL: redis://redis:6379/0
+    # DOU is collected into Neon by GitHub Actions until the VPS exists
+    # (stage 11). A second collector here would break DOU's consent limit of
+    # one request per 30 minutes, because this database cannot see those runs.
+    DISABLED_SOURCES: dou
   depends_on:
     postgres:
       condition: service_healthy

@@ -7,17 +7,18 @@ import redis
 from alembic import command
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from tests.support import (
     DEFAULT_TEST_DATABASE_URL,
-    DEFAULT_TEST_REDIS_URL,
     alembic_config,
+    redis_test_url,
     to_libpq,
     to_sqlalchemy,
 )
-from vacancy_radar.db.engine import make_engine
+from vacancy_radar.config import get_settings
+from vacancy_radar.db.engine import get_sessionmaker, make_engine
 
 # Modules such as `vacancy_radar.worker` read settings at import time, so the
 # test environment must be complete before any of them is imported. The
@@ -28,7 +29,7 @@ os.environ.setdefault(
     "DATABASE_URL",
     to_sqlalchemy(to_libpq(os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL))),
 )
-os.environ.setdefault("REDIS_URL", os.environ.get("TEST_REDIS_URL", DEFAULT_TEST_REDIS_URL))
+os.environ.setdefault("REDIS_URL", redis_test_url())
 
 
 @pytest.fixture
@@ -108,13 +109,35 @@ def db_session(migrated_engine: Engine) -> Iterator[Session]:
 
 
 @pytest.fixture
+def committed_database(
+    migrated_engine: Engine, test_database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Engine]:
+    """Point the app's own sessions at the test database, for code that commits.
+
+    The CLI and the Celery tasks open their sessions through settings and
+    commit for real, so `db_session` cannot isolate them. Instead the tables
+    are emptied after each test. Yields the engine to check rows with.
+    """
+    monkeypatch.setenv("DATABASE_URL", to_sqlalchemy(test_database_url))
+    monkeypatch.delenv("DISABLED_SOURCES", raising=False)
+    get_settings.cache_clear()
+    get_sessionmaker.cache_clear()
+    yield migrated_engine
+    get_sessionmaker().kw["bind"].dispose()
+    get_sessionmaker.cache_clear()
+    get_settings.cache_clear()
+    with migrated_engine.begin() as connection:
+        connection.execute(text("TRUNCATE collect_run, raw_vacancy, source RESTART IDENTITY"))
+
+
+@pytest.fixture
 def redis_client() -> Iterator[redis.Redis]:
     """Client on the test Redis database, emptied before and after each test.
 
     Uses `TEST_REDIS_URL`, never `REDIS_URL`, so the suite cannot flush the
     database a running worker uses as its broker.
     """
-    client = redis.Redis.from_url(os.environ.get("TEST_REDIS_URL", DEFAULT_TEST_REDIS_URL))
+    client = redis.Redis.from_url(redis_test_url())
     try:
         client.flushdb()
     except redis.ConnectionError as exc:

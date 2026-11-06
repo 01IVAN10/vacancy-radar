@@ -17,7 +17,7 @@ Status values: `allowed`, `allowed with conditions`, `pending consent`, `not all
 ## Collection rules (all sources)
 
 - One request per feed per collection cycle. No crawling of individual vacancy pages.
-- At most 1 request per second per domain (token bucket, stage 4). Honour `Retry-After`. Stop and alert on 403/429 instead of retrying aggressively.
+- At most 1 request per second per domain (Redis token bucket in the Celery worker, `sources/ratelimit.py`). Honour `Retry-After`. Stop and alert on 403/429 instead of retrying aggressively: they are never retried and are logged as `collect.blocked`.
 - Generic project User-Agent, never a browser User-Agent, never a personal email.
 - Never try to get around bot protection (Cloudflare challenges, CAPTCHAs). Being blocked means we are not welcome.
 - Public pages show the title, normalized fields, a short excerpt, and a link to the original. Full descriptions are stored only in `raw_vacancy` for parsing.
@@ -124,7 +124,7 @@ The consent covers **only** the conditions proposed in the request. Each one is 
 
 **What this means for implementation:**
 
-- **Rate limit:** `DouAdapter.min_interval` is 30 min. Before each fetch the collector reads the last request time from `collect_run`, and failed and dry runs count as requests too. A retry inside the window would break condition 1, so a failed DOU fetch waits until the next due cycle instead of being retried with backoff. With the job started every ~7.5 minutes, DOU is therefore fetched every 30–38 minutes. Stage 4's Celery retries must keep this rule.
+- **Rate limit:** `DouAdapter.min_interval` is 30 min. Before each fetch the collector reads the last request time from `collect_run`, and failed and dry runs count as requests too. A retry inside the window would break condition 1, so a failed DOU fetch waits until the next due cycle instead of being retried with backoff: `DouAdapter.max_retries` is 0, and the Celery task never retries DOU. With the job started every ~7.5 minutes, DOU is therefore fetched every 30–38 minutes (every 30–35 minutes under Celery Beat's 5-minute schedule). A per-source lock in Postgres keeps two collectors started together from both requesting it.
 - **Kill switch:** the `DISABLED_SOURCES` setting (`DISABLED_SOURCES=dou`) stops a source without a code change (condition 6). In the scheduled collection it is a GitHub repository variable. Naming the source on the command line does not override it.
 - **Attribution:** vacancy cards and `/analytics` show "Source: DOU" with a link (conditions 3–4).
 - **User-Agent:** the version is part of the agreed string. Keep `0.1` for DOU, or tell DOU when it changes.

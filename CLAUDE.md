@@ -25,7 +25,7 @@ Hosting: a ~€4/month VPS. Until it exists, a GitHub Actions cron workflow runs
 - **Async API, sync workers.** FastAPI uses the async engine and Celery tasks use the sync engine. Both run on psycopg 3 and share the same models.
 - **Pure domain core.** Normalization, salary parsing, skill extraction, dedup scoring, and subscription matching live in `src/vacancy_radar/domain/` as pure functions with no I/O.
 - **Idempotency is enforced by the database**: unique `(source_id, external_id)` with `ON CONFLICT` upserts; unique `(subscription_id, cluster_id)` on notifications. Every task is safe to run twice.
-- **Retries:** Celery `autoretry_for` with exponential backoff and jitter. **Rate limiting:** a Redis token bucket per source domain.
+- **Retries:** Celery `self.retry` with exponential backoff and full jitter, only for transient failures (timeouts, network errors, 5xx). Each source sets its own `max_retries`, and DOU's is 0 because its consent counts retries as requests. **Rate limiting:** a Redis token bucket per source domain.
 - **Dedup is conservative**: a missed duplicate is better than merging two different vacancies, because a wrong merge hides a vacancy from subscribers.
 - **FTS** uses the `simple` config + `unaccent`, because the texts mix Ukrainian and English and Postgres ships no Ukrainian config. Skills are stored as `text[]` with a GIN index.
 - **Analytics shows sample size**: every aggregate carries its `n`, and medians below the minimum sample are hidden.

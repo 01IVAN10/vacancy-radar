@@ -1,5 +1,6 @@
 """Helpers shared by tests and fixtures. Fixtures themselves live in `conftest.py`."""
 
+import os
 from pathlib import Path
 
 from alembic.config import Config
@@ -9,6 +10,13 @@ DEFAULT_TEST_DATABASE_URL = (
 )
 # Redis database 15, away from db 0 that the local Compose stack uses as its broker.
 DEFAULT_TEST_REDIS_URL = "redis://localhost:6379/15"
+
+
+def redis_test_url() -> str:
+    """URL of the Redis database tests may flush: `TEST_REDIS_URL`, never `REDIS_URL`."""
+    return os.environ.get("TEST_REDIS_URL", DEFAULT_TEST_REDIS_URL)
+
+
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 

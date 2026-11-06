@@ -1,9 +1,12 @@
 from pathlib import Path
 
 import pytest
+import structlog
 
+from vacancy_radar.collect.tasks import FETCH_SOURCE, fetch_source
 from vacancy_radar.config import get_settings
-from vacancy_radar.worker import celery_app, create_celery, ping
+from vacancy_radar.sources import ADAPTERS
+from vacancy_radar.worker import COLLECT_EVERY, celery_app, create_celery, ping, setup_structlog
 
 
 def test_ping_returns_pong() -> None:
@@ -11,8 +14,37 @@ def test_ping_returns_pong() -> None:
     assert ping.apply().get() == "pong"
 
 
-def test_beat_schedule_is_empty_until_real_tasks_exist() -> None:
-    assert celery_app.conf.beat_schedule == {}
+def test_beat_offers_every_source_to_fetch_source() -> None:
+    schedule = celery_app.conf.beat_schedule
+
+    assert set(schedule) == {f"fetch-{slug}" for slug in ADAPTERS}
+    for slug in ADAPTERS:
+        entry = schedule[f"fetch-{slug}"]
+        assert entry["task"] == FETCH_SOURCE
+        assert entry["args"] == (slug,)
+        assert entry["schedule"] == COLLECT_EVERY
+
+
+def test_beat_runs_more_often_than_any_source_may_be_fetched() -> None:
+    # min_interval, not Beat, decides when a request is sent.
+    assert all(adapter.min_interval > COLLECT_EVERY for adapter in ADAPTERS.values())
+
+
+def test_unpicked_beat_messages_expire_before_the_next_one_is_sent() -> None:
+    for entry in celery_app.conf.beat_schedule.values():
+        assert entry["options"]["expires"] < COLLECT_EVERY.total_seconds()
+
+
+def test_collection_task_is_registered() -> None:
+    assert celery_app.tasks[FETCH_SOURCE].name == fetch_source.name == FETCH_SOURCE
+
+
+def test_worker_logs_through_structlog() -> None:
+    try:
+        setup_structlog()
+        assert structlog.is_configured()
+    finally:
+        structlog.reset_defaults()
 
 
 def test_create_celery_requires_redis_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
