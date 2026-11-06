@@ -11,7 +11,7 @@ Updated 2026-11-06.
 - **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
 - **Next:** the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
 - **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
-- **After the findings PR:** stage 5 (normalization).
+- **Stage 5** (normalization) is in progress in four PRs: salary parser → vacancy attributes (seniority, work format, skills, DOU title) → NBU exchange rates → `vacancy` model and reprocessing. It runs in parallel with the wait for the findings PR, because it only reads `raw_vacancy`.
 
 ## Phase A: Start accumulating data
 
@@ -68,7 +68,7 @@ Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It a
 
 ### Stage 5: Normalization
 - [ ] Models `vacancy`, `skill`
-- [ ] Salary parser: ranges, "від/до", UAH/USD/EUR
+- [x] Salary parser: ranges, "від/до", UAH/USD/EUR
 - [ ] NBU exchange rates client, cached daily
 - [ ] Seniority and work-format detection
 - [ ] Skill dictionary with synonyms + extraction
