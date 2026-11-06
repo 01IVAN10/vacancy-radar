@@ -23,7 +23,7 @@ from vacancy_radar.domain.skills import extract_skills
 from vacancy_radar.domain.text import html_to_text, normalize_text
 from vacancy_radar.domain.work_format import WorkFormat, detect_work_formats
 
-NORMALIZER_VERSION: Final = 1
+NORMALIZER_VERSION: Final = 2
 
 # Both sources publish in Kyiv time, and NBU sets its rates per Kyiv day.
 KYIV = ZoneInfo("Europe/Kyiv")

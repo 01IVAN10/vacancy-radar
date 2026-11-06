@@ -75,6 +75,8 @@ Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It a
 - [x] Reprocessing task `raw_vacancy` → `vacancy`
 - [x] Parametrized unit tests built from real collected examples
 
+Fix after review (2026-11-06): benefits with an amount and a period ("insurance compensation up to $150 per month") are no longer read as a salary, `з/п` is a pay word, and "Go/No-Go", "RAG status" and "airflow sensors" are not skills. `NORMALIZER_VERSION` is 2, and a test pins it to a hash of the parser modules so a parser change cannot ship without a decision about the version.
+
 ### Stage 6: Auth and subscriptions
 - [ ] Models `user`, `subscription`
 - [ ] Registration and login (argon2, JWT in httpOnly cookie)

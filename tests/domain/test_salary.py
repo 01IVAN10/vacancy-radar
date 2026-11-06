@@ -158,6 +158,11 @@ def uah(low: int | None, high: int | None) -> Salary:
         pytest.param(
             "Salary: €3 000 – €4 000 gross", Salary(3000, 4000, "EUR"), id="synthetic-euro-prefix"
         ),
+        pytest.param("З/п від 30 000 грн", uah(30_000, None), id="synthetic-z-slash-p"),
+        # "курсом" is the exchange rate, not a course: it must not rule the amount out.
+        pytest.param(
+            "Зарплата за курсом НБУ: $1500", usd(1500, 1500), id="synthetic-exchange-rate"
+        ),
     ],
 )
 def test_finds_salary(text: str, expected: Salary) -> None:
@@ -210,6 +215,16 @@ def test_finds_salary(text: str, expected: Salary) -> None:
             "Хороша зарплата. Щорічно $500 на навчання.", id="synthetic-pay-word-sentence-before"
         ),
         pytest.param("Без «затискання» грошей $1000", id="synthetic-hroshi-not-a-label"),
+        # Benefits with an amount and a period: an allowance, not the salary.
+        pytest.param(
+            "Benefits: medical insurance compensation up to $150 per month, paid vacation.",
+            id="synthetic-insurance-compensation",
+        ),
+        pytest.param(
+            "We offer: compensation of English courses up to $200/month.",
+            id="synthetic-courses-compensation",
+        ),
+        pytest.param("Оплата обіду 200 $ на місяць", id="synthetic-lunch-payment"),
         # Conservative misses: a real salary, but too little evidence for it.
         pytest.param("Hourly rate up to $25 USD.", id="miss-period-before-amount"),
         pytest.param("Зарплата: $1000 – 1200 €", id="mixed-currencies"),
