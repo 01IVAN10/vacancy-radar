@@ -5,11 +5,16 @@ Idempotency is enforced by the database: `raw_vacancy` is unique on
 Collecting the same feed twice leaves the table as it was after the first run.
 
 Every attempt, successful or not, is also recorded in `collect_run`.
+
+`collect_if_due` is the entry point for every scheduler (the CLI and the Celery
+task): it applies the kill switch, the per-source lock and `min_interval`
+before any request is sent.
 """
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
 import httpx
 from sqlalchemy import func, literal_column, select
@@ -44,6 +49,38 @@ class CollectStats:
     inserted: int
     updated: int
     unchanged: int
+
+
+@dataclass(frozen=True, slots=True)
+class DryRunStats:
+    """Outcome of a dry run: the source was fetched, nothing was stored."""
+
+    source: str
+    fetched: int
+    skipped: int
+
+
+SkipReason = Literal["disabled", "busy", "min_interval"]
+
+
+@dataclass(frozen=True, slots=True)
+class Skipped:
+    """The source was not requested.
+
+    `disabled`: listed in `DISABLED_SOURCES`. `busy`: another collector holds
+    the source's lock right now. `min_interval`: requested too recently.
+    """
+
+    source: str
+    reason: SkipReason
+    last_attempt_at: datetime | None = None
+
+
+CollectOutcome = CollectStats | DryRunStats | Skipped
+
+# First key of the two-key advisory lock: keeps collection locks apart from
+# any other advisory lock the application may take later.
+COLLECT_LOCK_NAMESPACE = 1
 
 
 def ensure_source(session: Session, adapter: SourceAdapter) -> int:
@@ -118,6 +155,52 @@ def is_due(session: Session, adapter: SourceAdapter, *, now: datetime) -> bool:
     """
     last = last_attempt_at(session, adapter)
     return last is None or now - last >= adapter.min_interval
+
+
+def try_lock_source(session: Session, adapter: SourceAdapter) -> bool:
+    """Take the source's collection lock for the rest of the transaction.
+
+    Returns False at once if another transaction holds it. Without the lock,
+    two collectors started together (a scheduled task and a retry, say) would
+    both find the source due and both request it. Postgres releases the lock
+    on commit or rollback, so a crashed collector never leaves it behind.
+    """
+    locked = session.scalar(
+        select(func.pg_try_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext(adapter.slug)))
+    )
+    return bool(locked)
+
+
+def collect_if_due(
+    adapter: SourceAdapter,
+    *,
+    client: httpx.Client,
+    session: Session,
+    now: datetime,
+    disabled: Collection[str] = frozenset(),
+    dry_run: bool = False,
+) -> CollectOutcome:
+    """Collect one source unless it is disabled, locked, or not due yet.
+
+    The checks run in that order. The lock is taken before the due check, so
+    the check and the request it allows happen while no other collector can
+    request the same source. Fetch errors propagate as in `collect_source`.
+    """
+    if adapter.slug in disabled:
+        return Skipped(source=adapter.slug, reason="disabled")
+    if not try_lock_source(session, adapter):
+        return Skipped(source=adapter.slug, reason="busy")
+    if not is_due(session, adapter, now=now):
+        return Skipped(
+            source=adapter.slug,
+            reason="min_interval",
+            last_attempt_at=last_attempt_at(session, adapter),
+        )
+
+    if dry_run:
+        result = dry_run_source(adapter, client=client, session=session)
+        return DryRunStats(source=adapter.slug, fetched=len(result.items), skipped=result.skipped)
+    return collect_source(adapter, client=client, session=session)
 
 
 def collect_source(

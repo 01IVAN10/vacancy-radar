@@ -5,8 +5,10 @@ and the rest still run; the exit code is 1 if any source failed, so a cron
 job shows up red.
 
 The schedule runs more often than any source may be fetched. A source is
-skipped when it is listed in `DISABLED_SOURCES`, or when its `min_interval`
-has not passed since its last request (`collect_run`).
+skipped when it is listed in `DISABLED_SOURCES`, when another collector is
+fetching it right now, or when its `min_interval` has not passed since its
+last request (`collect_run`). The checks live in `collect_if_due`, shared
+with the Celery task.
 """
 
 import argparse
@@ -18,12 +20,7 @@ from datetime import UTC, datetime
 import httpx
 import structlog
 
-from vacancy_radar.collect.service import (
-    collect_source,
-    dry_run_source,
-    is_due,
-    last_attempt_at,
-)
+from vacancy_radar.collect.service import CollectStats, DryRunStats, Skipped, collect_if_due
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.engine import get_sessionmaker
 from vacancy_radar.log import configure_logging
@@ -56,30 +53,31 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return args
 
 
-def run_one(adapter: SourceAdapter, client: httpx.Client, *, dry_run: bool) -> None:
+def run_one(
+    adapter: SourceAdapter, client: httpx.Client, *, disabled: frozenset[str], dry_run: bool
+) -> None:
     with get_sessionmaker()() as session:
-        if not is_due(session, adapter, now=datetime.now(UTC)):
-            last = last_attempt_at(session, adapter)
+        outcome = collect_if_due(
+            adapter,
+            client=client,
+            session=session,
+            now=datetime.now(UTC),
+            disabled=disabled,
+            dry_run=dry_run,
+        )
+
+    match outcome:
+        case Skipped(last_attempt_at=last):
             logger.info(
                 "collect.skipped",
-                source=adapter.slug,
-                reason="min_interval",
+                source=outcome.source,
+                reason=outcome.reason,
                 last_attempt_at=last.isoformat() if last else None,
             )
-            return
-
-        if dry_run:
-            result = dry_run_source(adapter, client=client, session=session)
-            logger.info(
-                "collect.dry_run",
-                source=adapter.slug,
-                fetched=len(result.items),
-                skipped=result.skipped,
-            )
-            return
-
-        stats = collect_source(adapter, client=client, session=session)
-    logger.info("collect.finished", **asdict(stats))
+        case DryRunStats():
+            logger.info("collect.dry_run", **asdict(outcome))
+        case CollectStats():
+            logger.info("collect.finished", **asdict(outcome))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -90,11 +88,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     failed = False
     with build_client() as client:
         for slug in args.sources:
-            if slug in settings.disabled_sources:
-                logger.info("collect.skipped", source=slug, reason="disabled")
-                continue
             try:
-                run_one(ADAPTERS[slug], client, dry_run=args.dry_run)
+                run_one(
+                    ADAPTERS[slug],
+                    client,
+                    disabled=settings.disabled_sources,
+                    dry_run=args.dry_run,
+                )
             except (httpx.HTTPError, FeedError) as exc:
                 failed = True
                 logger.error(

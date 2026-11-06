@@ -1,21 +1,27 @@
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Connection, Engine, func, select
 from sqlalchemy.orm import Session
 
 from tests.support import fixture_bytes
 from vacancy_radar.collect.service import (
+    COLLECT_LOCK_NAMESPACE,
     MAX_ERROR_LENGTH,
     CollectStats,
+    DryRunStats,
+    Skipped,
     UpsertCounts,
+    collect_if_due,
     collect_source,
     dry_run_source,
     ensure_source,
     is_due,
     last_attempt_at,
+    try_lock_source,
     upsert_raw_items,
 )
 from vacancy_radar.db.models import CollectRun, RawVacancy, Source
@@ -33,8 +39,10 @@ class FakeAdapter:
 
     def __init__(self, result: FetchResult | Exception) -> None:
         self.result = result
+        self.fetch_count = 0
 
     def fetch(self, client: httpx.Client) -> FetchResult:
+        self.fetch_count += 1
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -229,3 +237,111 @@ def test_due_check_looks_only_at_the_same_source(db_session: Session) -> None:
         collect_source(other, client=client, session=db_session)
 
     assert is_due(db_session, FakeAdapter(FetchResult(items=[])), now=datetime.now(UTC))
+
+
+@pytest.fixture
+def client() -> Iterator[httpx.Client]:
+    with httpx.Client() as client:
+        yield client
+
+
+@pytest.fixture
+def other_collector(migrated_engine: Engine) -> Iterator[Connection]:
+    """A second database connection, standing in for a collector running in parallel."""
+    with migrated_engine.connect() as connection:
+        try:
+            yield connection
+        finally:
+            connection.rollback()
+
+
+def hold_lock(connection: Connection, slug: str) -> None:
+    connection.execute(
+        select(func.pg_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext(slug)))
+    )
+
+
+def test_collect_if_due_collects_a_due_source(db_session: Session, client: httpx.Client) -> None:
+    adapter = FakeAdapter(FetchResult(items=ITEMS))
+
+    outcome = collect_if_due(adapter, client=client, session=db_session, now=datetime.now(UTC))
+
+    assert outcome == CollectStats(
+        source="fake", fetched=5, skipped=0, inserted=5, updated=0, unchanged=0
+    )
+    assert [run.status for run in runs(db_session)] == ["ok"]
+
+
+def test_collect_if_due_dry_run_stores_nothing(db_session: Session, client: httpx.Client) -> None:
+    adapter = FakeAdapter(FetchResult(items=ITEMS, skipped=1))
+
+    outcome = collect_if_due(
+        adapter, client=client, session=db_session, now=datetime.now(UTC), dry_run=True
+    )
+
+    assert outcome == DryRunStats(source="fake", fetched=5, skipped=1)
+    assert stored(db_session) == {}
+    assert [run.status for run in runs(db_session)] == ["dry_run"]
+
+
+def test_collect_if_due_skips_a_disabled_source(db_session: Session, client: httpx.Client) -> None:
+    adapter = FakeAdapter(FetchResult(items=ITEMS))
+
+    outcome = collect_if_due(
+        adapter, client=client, session=db_session, now=datetime.now(UTC), disabled={"fake"}
+    )
+
+    assert outcome == Skipped(source="fake", reason="disabled")
+    assert adapter.fetch_count == 0
+    assert runs(db_session) == []
+
+
+def test_collect_if_due_skips_a_source_requested_too_recently(
+    db_session: Session, client: httpx.Client
+) -> None:
+    adapter = FakeAdapter(FetchResult(items=ITEMS))
+    collect_source(adapter, client=client, session=db_session)
+    [run] = runs(db_session)
+
+    outcome = collect_if_due(
+        adapter, client=client, session=db_session, now=run.started_at + timedelta(minutes=1)
+    )
+
+    assert outcome == Skipped(source="fake", reason="min_interval", last_attempt_at=run.started_at)
+    assert adapter.fetch_count == 1
+
+
+def test_collect_if_due_skips_a_source_another_collector_is_fetching(
+    db_session: Session, client: httpx.Client, other_collector: Connection
+) -> None:
+    adapter = FakeAdapter(FetchResult(items=ITEMS))
+    hold_lock(other_collector, adapter.slug)
+
+    outcome = collect_if_due(adapter, client=client, session=db_session, now=datetime.now(UTC))
+
+    assert outcome == Skipped(source="fake", reason="busy")
+    assert adapter.fetch_count == 0
+
+
+def test_lock_of_one_source_does_not_block_another(
+    db_session: Session, other_collector: Connection
+) -> None:
+    hold_lock(other_collector, "other")
+
+    assert try_lock_source(db_session, FakeAdapter(FetchResult(items=[])))
+
+
+def test_lock_is_released_when_the_transaction_ends(
+    migrated_engine: Engine, other_collector: Connection
+) -> None:
+    adapter = FakeAdapter(FetchResult(items=[]))
+    with Session(migrated_engine) as first:
+        assert try_lock_source(first, adapter)
+        assert not other_collector.scalar(
+            select(func.pg_try_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext("fake")))
+        )
+        first.rollback()
+
+    assert other_collector.scalar(
+        select(func.pg_try_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext("fake")))
+    )
