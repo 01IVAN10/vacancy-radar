@@ -7,6 +7,8 @@ from alembic.config import Config
 DEFAULT_TEST_DATABASE_URL = (
     "postgresql://vacancy_radar:vacancy_radar@localhost:5432/vacancy_radar_test"
 )
+# Redis database 15, away from db 0 that the local Compose stack uses as its broker.
+DEFAULT_TEST_REDIS_URL = "redis://localhost:6379/15"
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 

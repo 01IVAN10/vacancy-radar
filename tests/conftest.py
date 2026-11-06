@@ -3,13 +3,20 @@ from collections.abc import Iterator
 
 import psycopg
 import pytest
+import redis
 from alembic import command
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from tests.support import DEFAULT_TEST_DATABASE_URL, alembic_config, to_libpq, to_sqlalchemy
+from tests.support import (
+    DEFAULT_TEST_DATABASE_URL,
+    DEFAULT_TEST_REDIS_URL,
+    alembic_config,
+    to_libpq,
+    to_sqlalchemy,
+)
 from vacancy_radar.db.engine import make_engine
 
 # Modules such as `vacancy_radar.worker` read settings at import time, so the
@@ -21,7 +28,7 @@ os.environ.setdefault(
     "DATABASE_URL",
     to_sqlalchemy(to_libpq(os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL))),
 )
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
+os.environ.setdefault("REDIS_URL", os.environ.get("TEST_REDIS_URL", DEFAULT_TEST_REDIS_URL))
 
 
 @pytest.fixture
@@ -98,3 +105,25 @@ def db_session(migrated_engine: Engine) -> Iterator[Session]:
         finally:
             session.close()
             transaction.rollback()
+
+
+@pytest.fixture
+def redis_client() -> Iterator[redis.Redis]:
+    """Client on the test Redis database, emptied before and after each test.
+
+    Uses `TEST_REDIS_URL`, never `REDIS_URL`, so the suite cannot flush the
+    database a running worker uses as its broker.
+    """
+    client = redis.Redis.from_url(os.environ.get("TEST_REDIS_URL", DEFAULT_TEST_REDIS_URL))
+    try:
+        client.flushdb()
+    except redis.ConnectionError as exc:
+        client.close()
+        pytest.fail(
+            f"Cannot reach Redis for tests ({exc}). Start it with `docker compose up -d redis`."
+        )
+    try:
+        yield client
+    finally:
+        client.flushdb()
+        client.close()
