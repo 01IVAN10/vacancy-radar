@@ -35,9 +35,9 @@ def test_task_normalizes_pending_items() -> None:
 
     assert result.successful(), result.result
     # DOU salaries are in USD, so NBU is never called.
-    assert result.result == {"normalized": 6, "with_salary": 2, "with_usd": 2}
+    assert result.result == {"normalized": 6, "with_salary": 2, "converted": 0}
     assert normalize_pending_task.apply().result == {
         "normalized": 0,
         "with_salary": 0,
-        "with_usd": 0,
+        "converted": 0,
     }

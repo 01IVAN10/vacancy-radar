@@ -11,11 +11,11 @@ Every collected item is stored unchanged in `raw_vacancy`. The `vacancy` table i
    - has no `vacancy` row yet;
    - has a payload that changed since (`raw_vacancy.updated_at` ≠ `vacancy.raw_updated_at`);
    - has a `vacancy` row built by another `NORMALIZER_VERSION`.
-3. Normalizes each item with its source's mapping (`domain/normalize.py`).
-4. Fetches the NBU rates for the days its non-USD salaries need (`exchange/rates.py`). Rates are cached in `exchange_rate`, so NBU sees about two requests per new day.
-5. Upserts the batch with `INSERT … ON CONFLICT (raw_vacancy_id) DO UPDATE` and commits.
+3. Normalizes each item with its source's mapping (`domain/normalize.py`). A salary in dollars gets its monthly USD range here; no network is involved.
+4. Upserts the batch with `INSERT … ON CONFLICT (raw_vacancy_id) DO UPDATE` and commits.
+5. Converts the salaries that still have no dollar value (`convert_salaries`): hryvnias and euros, except hourly rates. It fetches the NBU rates for their days (`exchange/rates.py`) and commits. Rates are cached in `exchange_rate`, so NBU sees about two requests per new day.
 
-A second run changes nothing, and two runs at once only repeat each other's work. If NBU fails, the current batch is rolled back and its items stay pending for the next run, so a salary never keeps a NULL dollar value because of a network error. The task therefore has no retries of its own. Deleting a raw item deletes its vacancy (`ON DELETE CASCADE`).
+A second run changes nothing, and two runs at once only repeat each other's work. Conversion is a separate step so that NBU cannot hold up normalization. If NBU fails, the vacancies are written all the same and only their `salary_usd_*` stay NULL. The next run converts them, because conversion picks every non-hourly salary in hryvnias or euros whose dollar columns are both NULL. The task therefore has no retries of its own. A salary whose day has no rate and no rate in the 7 days before stays NULL and is tried again on every run, which costs two NBU requests a run. In practice this does not happen, because NBU sets a rate for every calendar day in advance. Deleting a raw item deletes its vacancy (`ON DELETE CASCADE`).
 
 Normalization does not run in the GitHub Actions job yet. Neon only accumulates raw data until the VPS exists (stage 11). There, `--rebuild` builds all vacancies from it.
 
