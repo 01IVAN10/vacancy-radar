@@ -203,6 +203,24 @@ Revisit only if Work.ua publishes an API or feed, or gives permission.
 
 ---
 
+## Reference data
+
+Data that is not a vacancy source but is fetched from outside.
+
+### NBU exchange rates
+
+**Status: allowed.** The National Bank of Ukraine publishes the official hryvnia rates through a public API, documented for developers on its open data page (`https://bank.gov.ua/ua/open-data/api-dev`). robots.txt (`User-agent: *`, empty `Disallow:`) restricts nothing. The page states no terms of use, licence, or request limits for the API. Checked on 2026-11-06 with the project User-Agent and a handful of requests.
+
+| | |
+|---|---|
+| Used endpoint | `https://bank.gov.ua/NBU_Exchange/exchange_site?start=YYYYMMDD&end=YYYYMMDD&valcode=usd&sort=exchangedate&order=asc&json`: one currency for a date range |
+| Fields | `exchangedate` (`dd.mm.yyyy`), `cc`, `rate_per_unit` (hryvnias per unit), `units`, `calcdate` |
+| Coverage | every calendar day; weekends repeat the last business day's rate |
+| Publication | the page: rates are set "До 15:30 – на ПОТОЧНИЙ робочий день. Після 15:30 - на НАСТУПНИЙ робочий день". A day with no rate set yet is missing from the response; a range wholly in the future returns `[]` |
+| Also available | `/NBUStatService/v1/statdirectory/exchange?date=YYYYMMDD&json`: every currency for one day. Not used, because filling N missing days would take N requests instead of 2 |
+
+**How it is used** (`exchange/`): salaries are converted with the rate of the day the vacancy was published. Rates are stored in `exchange_rate` and never change, so NBU is asked only for days not stored yet: one range request per currency (USD, EUR), at least 1 s apart. A day NBU has no rate for yet takes the latest stored rate from up to 7 days earlier.
+
 ## Open questions
 
 1. ~~**DOU consent.**~~ Resolved on 2026-11-05: written consent on the proposed conditions (see [DOU → Consent](#consent)).

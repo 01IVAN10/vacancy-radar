@@ -69,7 +69,7 @@ Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It a
 ### Stage 5: Normalization
 - [ ] Models `vacancy`, `skill`
 - [x] Salary parser: ranges, "від/до", UAH/USD/EUR
-- [ ] NBU exchange rates client, cached daily
+- [x] NBU exchange rates client, cached daily
 - [x] Seniority and work-format detection
 - [x] Skill dictionary with synonyms + extraction
 - [ ] Reprocessing task `raw_vacancy` → `vacancy`
