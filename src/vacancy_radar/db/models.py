@@ -3,10 +3,12 @@
 `raw_vacancy` keeps every fetched item exactly as the source returned it, so
 the normalized tables of later stages can be rebuilt from it at any time.
 `collect_run` records every collection attempt, so gaps and missed items can
-be found with SQL instead of reading job logs.
+be found with SQL instead of reading job logs. `exchange_rate` caches the
+official NBU rates that salaries are converted with.
 """
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -15,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Identity,
     Index,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -90,3 +93,22 @@ class CollectRun(Base):
     unchanged: Mapped[int | None]
     error_type: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class ExchangeRate(Base):
+    """The official NBU rate of one currency on one day, in hryvnias per unit.
+
+    NBU sets a rate for every calendar day, weekends included, so each day a
+    vacancy was published on has its own row. Rates never change once set,
+    which makes this table a cache: a day is requested from NBU only once.
+    """
+
+    __tablename__ = "exchange_rate"
+    __table_args__ = (
+        CheckConstraint("currency IN ('USD', 'EUR')", name="currency"),
+        CheckConstraint("uah_per_unit > 0", name="uah_per_unit_positive"),
+    )
+
+    day: Mapped[date] = mapped_column(primary_key=True)
+    currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    uah_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 6))
