@@ -14,31 +14,19 @@ import httpx
 import pytest
 import respx
 import structlog
-from sqlalchemy import Engine, func, select, text
+from sqlalchemy import Engine, func, select
 
-from tests.support import fixture_bytes, to_sqlalchemy
+from tests.support import fixture_bytes
 from vacancy_radar.collect.__main__ import main
 from vacancy_radar.config import get_settings
-from vacancy_radar.db.engine import get_sessionmaker
 from vacancy_radar.db.models import CollectRun, RawVacancy
 from vacancy_radar.sources.djinni import FEED_URL, DjinniAdapter
 from vacancy_radar.sources.dou import FEED_URL as DOU_FEED_URL
 
 
 @pytest.fixture(autouse=True)
-def cli_database(
-    migrated_engine: Engine, test_database_url: str, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[None]:
-    monkeypatch.setenv("DATABASE_URL", to_sqlalchemy(test_database_url))
-    monkeypatch.delenv("DISABLED_SOURCES", raising=False)
-    get_settings.cache_clear()
-    get_sessionmaker.cache_clear()
+def cli_database(committed_database: Engine) -> Iterator[None]:
     yield
-    get_sessionmaker().kw["bind"].dispose()
-    get_sessionmaker.cache_clear()
-    get_settings.cache_clear()
-    with migrated_engine.begin() as connection:
-        connection.execute(text("TRUNCATE collect_run, raw_vacancy, source RESTART IDENTITY"))
     # main() points structlog at pytest's captured stderr; undo that.
     structlog.reset_defaults()
 

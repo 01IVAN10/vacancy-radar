@@ -106,12 +106,29 @@ With a local client instead (`brew install libpq`, version 16 or newer), run `pg
 
 The data moves to the VPS at deploy time (stage 11 in [`PLAN.md`](PLAN.md)).
 
+### Background collection (Celery)
+
+On the VPS (stage 11), Celery replaces the GitHub Actions job. Locally, `docker compose up` already runs it:
+
+- **Beat** sends one `collect.fetch_source` task per source every 5 minutes. A message the worker hasn't picked up within 4 minutes is dropped, so tasks don't pile up while the worker is down.
+- **The worker** runs the same `collect_if_due` as the CLI. It skips a disabled source, a source another collector is fetching right now (a Postgres advisory lock), and a source whose `min_interval` hasn't passed. Djinni is fetched every 25–30 minutes and DOU every 30–35.
+- **Rate limit:** every request first takes a token from a Redis token bucket for its domain, at most 1 request per second across all worker processes.
+- **Retries:** timeouts, network errors and 5xx are retried with exponential backoff (from 30 s, capped at 10 min) and full jitter, honouring a numeric `Retry-After`. Each source sets its own `max_retries`: Djinni 3, DOU 0, because DOU's consent counts retries as requests. 403 and 429 are never retried and are logged as `collect.blocked`.
+
+Compose sets `DISABLED_SOURCES=dou` for the worker. Until the VPS exists, DOU is collected into Neon by GitHub Actions, and a second local collector would break DOU's limit of one request per 30 minutes. The worker therefore collects only Djinni, into the local database.
+
+| Task | Command |
+|---|---|
+| Worker logs | `docker compose logs -f worker` |
+| Run a collection now | `docker compose exec worker celery -A vacancy_radar.worker call collect.fetch_source --args='["djinni"]'` |
+| Registered tasks | `docker compose exec worker celery -A vacancy_radar.worker inspect registered` |
+
 ## Project layout
 
 ```text
 src/vacancy_radar/
 ├── api/        # FastAPI app and routes
-├── collect/    # idempotent storage of fetched items + the collector CLI
+├── collect/    # due checks, idempotent storage, the collector CLI and the Celery task
 ├── db/         # SQLAlchemy models and sync/async engines
 ├── domain/     # pure functions: parsing, normalization, matching (no I/O)
 ├── sources/    # one adapter per source (fetch + parse), behind SourceAdapter

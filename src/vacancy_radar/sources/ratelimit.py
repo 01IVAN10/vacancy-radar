@@ -64,6 +64,7 @@ class TokenBucket:
         capacity: int = BURST,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        self.redis = redis
         self.rate = rate
         self.capacity = capacity
         self.clock = clock

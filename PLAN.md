@@ -10,7 +10,8 @@ Updated 2026-11-06.
 
 - **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
 - **Next:** the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
-- **In parallel:** stage 4 (Celery). Its retries must respect DOU's `min_interval`.
+- **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
+- **After the findings PR:** stage 5 (normalization).
 
 ## Phase A: Start accumulating data
 
@@ -57,11 +58,13 @@ Decision (2026-11-05): Neon Free, Postgres 16, region `eu-central-1`. It has 1 G
 ## Phase B: Working version for personal use
 
 ### Stage 4: Celery collection
-- [ ] Celery app + `fetch_source` task wrapping the same collection code
-- [ ] Celery Beat schedule
-- [ ] Retry with exponential backoff and jitter
-- [ ] Redis token-bucket rate limiter per domain
-- [ ] Tests: retry on 5xx/timeout, rate limiter, task idempotency
+- [x] Celery app + `fetch_source` task wrapping the same collection code
+- [x] Celery Beat schedule
+- [x] Retry with exponential backoff and jitter
+- [x] Redis token-bucket rate limiter per domain
+- [x] Tests: retry on 5xx/timeout, rate limiter, task idempotency
+
+Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It applies the kill switch, a Postgres advisory lock per source, and `min_interval`. Retries are per source (`max_retries`: Djinni 3, DOU 0, because DOU's consent counts retries as requests) and skip only the `min_interval` check. Beat offers each source every 5 minutes. Locally, Compose disables DOU, which GitHub Actions collects into Neon until stage 11.
 
 ### Stage 5: Normalization
 - [ ] Models `vacancy`, `skill`

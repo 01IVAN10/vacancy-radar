@@ -25,6 +25,9 @@ class DjinniAdapter:
     base_url = "https://djinni.co"
     # About one request per 30 min on a 15-min schedule, with room for cron jitter.
     min_interval = timedelta(minutes=25)
+    # A few quick retries after a timeout or 5xx, so one hiccup does not cost
+    # a 30-minute gap in a feed that covers only ~2.5 hours.
+    max_retries = 3
 
     def fetch(self, client: httpx.Client) -> FetchResult:
         response = client.get(FEED_URL)

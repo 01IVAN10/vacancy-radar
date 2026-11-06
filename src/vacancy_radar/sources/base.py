@@ -45,6 +45,10 @@ class SourceAdapter(Protocol):
     # Shortest allowed time between two requests to the source, failed ones
     # included. The schedule runs more often; a source that is not due is skipped.
     min_interval: timedelta
+    # How often the Celery task retries a failed request (timeouts, 5xx) with
+    # backoff. A retry is not held back by `min_interval`, so a source whose
+    # terms count retries as requests sets 0 and waits for its next due run.
+    max_retries: int
 
     def fetch(self, client: httpx.Client) -> FetchResult:
         """Fetch the source once.

@@ -14,13 +14,12 @@ with the Celery task.
 import argparse
 import sys
 from collections.abc import Sequence
-from dataclasses import asdict
 from datetime import UTC, datetime
 
 import httpx
 import structlog
 
-from vacancy_radar.collect.service import CollectStats, DryRunStats, Skipped, collect_if_due
+from vacancy_radar.collect.service import collect_if_due, describe
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.engine import get_sessionmaker
 from vacancy_radar.log import configure_logging
@@ -66,18 +65,8 @@ def run_one(
             dry_run=dry_run,
         )
 
-    match outcome:
-        case Skipped(last_attempt_at=last):
-            logger.info(
-                "collect.skipped",
-                source=outcome.source,
-                reason=outcome.reason,
-                last_attempt_at=last.isoformat() if last else None,
-            )
-        case DryRunStats():
-            logger.info("collect.dry_run", **asdict(outcome))
-        case CollectStats():
-            logger.info("collect.finished", **asdict(outcome))
+    event, fields = describe(outcome)
+    logger.info(event, **fields)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -27,6 +27,9 @@ class DouAdapter:
     base_url = "https://jobs.dou.ua"
     # Consent condition 1. Never lower this without a new agreement with DOU.
     min_interval = timedelta(minutes=30)
+    # Consent condition 1 counts retries as requests, so a failed fetch is
+    # never retried: it waits until the source is due again.
+    max_retries = 0
 
     def fetch(self, client: httpx.Client) -> FetchResult:
         response = client.get(FEED_URL)
