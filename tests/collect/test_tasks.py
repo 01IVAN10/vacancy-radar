@@ -120,6 +120,26 @@ def test_transient_failures_are_retried_until_one_succeeds(
     assert stored(committed_database) == 5
 
 
+def test_retry_delivered_again_sends_no_request(
+    respx_mock: respx.MockRouter, committed_database: Engine
+) -> None:
+    route = respx_mock.get(DJINNI_FEED_URL).mock(
+        side_effect=[httpx.Response(503), httpx.Response(200, content=DJINNI_FEED)]
+    )
+    run_ok("djinni")
+    with committed_database.connect() as connection:
+        failed_run = connection.scalar(select(func.min(CollectRun.id)))
+
+    # The broker delivers the retry of the first, failed run a second time.
+    again = fetch_source.apply(args=("djinni",), kwargs={"retry_of": failed_run})
+
+    assert again.successful(), again.result
+    assert isinstance(again.result, dict)
+    assert (again.result["event"], again.result["reason"]) == ("collect.skipped", "superseded")
+    assert route.call_count == 2
+    assert statuses(committed_database) == ["failed", "ok"]
+
+
 def test_gives_up_after_max_retries(
     respx_mock: respx.MockRouter, committed_database: Engine
 ) -> None:

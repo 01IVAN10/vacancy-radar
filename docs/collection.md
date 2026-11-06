@@ -1,6 +1,6 @@
 # Checking collection
 
-Every request to a source is a row in `collect_run`: `ok`, `failed`, or `dry_run` (fetched without storing items). These questions are answered with SQL instead of job logs.
+Every request to a source is a row in `collect_run`. The row is committed as `running` before the request is sent, then finished as `ok`, `failed`, or `dry_run` (fetched without storing items). Any error after the request, a database error included, finishes the run as `failed`. A run that stays `running` was interrupted (the process died, or the database could not record the failure), and it still counts as a request for the source's `min_interval`. These questions are answered with SQL instead of job logs.
 
 - Did collection run on schedule?
 - Did it fail?
@@ -37,6 +37,7 @@ SELECT s.slug,
        date_trunc('day', r.started_at AT TIME ZONE 'Europe/Kyiv') AS day,
        count(*) FILTER (WHERE r.status = 'ok')     AS ok,
        count(*) FILTER (WHERE r.status = 'failed') AS failed,
+       count(*) FILTER (WHERE r.status = 'running') AS running,
        sum(r.inserted)                             AS new_items
 FROM collect_run r
 JOIN source s ON s.id = r.source_id
@@ -86,6 +87,19 @@ JOIN source s ON s.id = r.source_id
 WHERE r.status = 'failed'
 ORDER BY r.started_at DESC
 LIMIT 20;
+```
+
+## Interrupted runs
+
+A run is `running` only while its request is in flight, which takes seconds. An older one was interrupted. A few after deploys or crashes are expected. More of them mean the collector keeps dying after its request, or cannot write to the database.
+
+```sql
+SELECT s.slug, r.started_at
+FROM collect_run r
+JOIN source s ON s.id = r.source_id
+WHERE r.status = 'running'
+  AND r.started_at < now() - interval '1 hour'
+ORDER BY r.started_at DESC;
 ```
 
 ## Database size

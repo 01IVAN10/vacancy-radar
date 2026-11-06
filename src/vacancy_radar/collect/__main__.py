@@ -1,13 +1,13 @@
 """Command line entry point: `python -m vacancy_radar.collect [SOURCE ...]`.
 
-Each source is collected in its own transaction. A failing source is logged
-and the rest still run; the exit code is 1 if any source failed, so a cron
+Each source is collected on its own. A failing source, whatever the error, is
+recorded and logged and the rest still run; the exit code is 1 if any source failed, so a cron
 job shows up red.
 
 The schedule runs more often than any source may be fetched. A source is
 skipped when it is listed in `DISABLED_SOURCES`, when another collector is
-fetching it right now, or when its `min_interval` has not passed since its
-last request (`collect_run`). The checks live in `collect_if_due`, shared
+starting a run for it right now, or when its `min_interval` has not passed
+since its last request (`collect_run`). The checks live in `collect_if_due`, shared
 with the Celery task.
 """
 
@@ -19,11 +19,11 @@ from datetime import UTC, datetime
 import httpx
 import structlog
 
-from vacancy_radar.collect.service import collect_if_due, describe
+from vacancy_radar.collect.service import CollectError, collect_if_due, describe
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.engine import get_sessionmaker
 from vacancy_radar.log import configure_logging
-from vacancy_radar.sources import ADAPTERS, FeedError, SourceAdapter
+from vacancy_radar.sources import ADAPTERS, SourceAdapter
 from vacancy_radar.sources.http import build_client
 
 logger = structlog.get_logger("vacancy_radar.collect")
@@ -84,10 +84,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     disabled=settings.disabled_sources,
                     dry_run=args.dry_run,
                 )
-            except (httpx.HTTPError, FeedError) as exc:
+            except CollectError as exc:
                 failed = True
                 logger.error(
-                    "collect.failed", source=slug, error_type=type(exc).__name__, error=str(exc)
+                    "collect.failed",
+                    source=slug,
+                    error_type=type(exc.error).__name__,
+                    error=str(exc.error),
                 )
     return 1 if failed else 0
 
