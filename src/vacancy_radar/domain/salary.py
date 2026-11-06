@@ -133,10 +133,12 @@ PERIOD_AFTER = re.compile(
 # entries ending in (?!\w) must match the whole word.
 PAY_WORDS = re.compile(
     r"""(?<!\w)(?:
-        зарплат|заробіт|зп(?!\w)|вилк|оклад|ставк|рейт(?!\w)|дохід|доход|винагород|оплат|
-        грошове\ забезпечення|фінансова\ мотивац|
+        зарплат|заробіт|зп(?!\w)|з/п(?!\w)|вилк|оклад|ставк|рейт(?!\w)|дохід|доход|винагород|
+        оплат|грошове\ забезпечення|фінансова\ мотивац|
         гроші(?=:)|💰|                                    # labels: "Гроші: 60 000 грн", "💰 Умови"
-        salar|compensation|pay(?!\w)|base(?!\w)|income|rate(?!\w)|wage|earn
+        salar|pay(?!\w)|base(?!\w)|income|rate(?!\w)|wage|earn|
+        # Only as a label: "compensation of English courses" is a benefit.
+        compensation(?=:)
     )""",
     re.IGNORECASE | re.VERBOSE,
 )
@@ -145,9 +147,11 @@ NOT_PAY_WORDS = re.compile(
         бюджет|виручк|оборот|угод|чек(?!\w)|інвестиц|залучил|донат|задонат|фонд|
         рекомендац|бонус|премі|kpi|компенсу|компенсац|витрат|економі|спенд|профіт|ціль(?!\w)|
         ринк|ринок|підписк|ціна|ціну|вартіст|кошт|капітал|
+        страхуван|навчан|курс(?:и|ів|ах)(?!\w)|обід|харчуван|спорт|обладнан|коворкінг|
         budget|revenue|turnover|deal|invest|raised|donat|fund|aid(?!\w)|referral|bonus|
         commission|wellness|spend|profit|target|goal|market|subscription|price|cost|capital|
-        valuation
+        valuation|
+        insurance|medical|course|lunch|meal|gym|sport|equipment|coworking
     )""",
     re.IGNORECASE | re.VERBOSE,
 )

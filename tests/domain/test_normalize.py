@@ -1,11 +1,14 @@
 """Normalization of whole feed items, end to end on the saved fixtures."""
 
+import hashlib
 from datetime import UTC, date, datetime, timedelta, timezone
+from importlib.resources import files
 
 import pytest
 
 from tests.support import fixture_bytes
 from vacancy_radar.domain.normalize import (
+    NORMALIZER_VERSION,
     NORMALIZERS,
     kyiv_date,
     normalize,
@@ -108,3 +111,40 @@ def test_parse_pub_date(value: object, expected: datetime | None) -> None:
 def test_kyiv_date_is_the_rate_day() -> None:
     # 22:30 UTC on Nov 5 is already Nov 6 in Kyiv (UTC+2 in winter).
     assert kyiv_date(datetime(2026, 11, 5, 22, 30, tzinfo=UTC)) == date(2026, 11, 6)
+
+
+# --- the normalizer version ------------------------------------------------------
+
+# Every module a `vacancy` row is derived from.
+PARSER_MODULES = (
+    "dou_title.py",
+    "money.py",
+    "normalize.py",
+    "salary.py",
+    "seniority.py",
+    "skills.py",
+    "text.py",
+    "work_format.py",
+)
+# The version and the parsers it was set for. Stored vacancies are rebuilt only
+# when NORMALIZER_VERSION changes, so a parser change that ships without a new
+# version leaves old rows parsed the old way.
+PINNED_PARSERS = (2, "9ba328b410af15ef421d5f8ad7aad0c41cc573f9f1a35e7f65f8e4732c824d51")
+
+
+def parsers_fingerprint() -> str:
+    digest = hashlib.sha256()
+    for name in PARSER_MODULES:
+        digest.update(name.encode())
+        digest.update(files("vacancy_radar.domain").joinpath(name).read_bytes())
+    return digest.hexdigest()
+
+
+def test_parser_changes_come_with_a_new_normalizer_version() -> None:
+    """Fails whenever a parser module changes, so the version is a decision.
+
+    If the change can alter any `vacancy` row (a pattern, a dictionary entry,
+    a rounding rule), raise NORMALIZER_VERSION. If it cannot (a comment, a
+    docstring), keep the version. Either way, pin the new fingerprint below.
+    """
+    assert (NORMALIZER_VERSION, parsers_fingerprint()) == PINNED_PARSERS

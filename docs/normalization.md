@@ -25,7 +25,7 @@ Normalization does not run in the GitHub Actions job yet. Neon only accumulates 
 | Rebuild every vacancy | `uv run python -m vacancy_radar.normalize --rebuild` |
 | Run the task in Compose | `docker compose exec worker celery -A vacancy_radar.worker call normalize.pending` |
 
-**After changing a parser,** raise `NORMALIZER_VERSION` in `domain/normalize.py`. The next run rebuilds every vacancy. `--rebuild` does the same once, without a version change.
+**After changing a parser,** raise `NORMALIZER_VERSION` in `domain/normalize.py`. The next run rebuilds every vacancy. `--rebuild` does the same once, without a version change. `test_parser_changes_come_with_a_new_normalizer_version` (`tests/domain/test_normalize.py`) pins the version to a hash of the parser modules, so it fails on any change to them. Raise the version if the change can alter a `vacancy` row, keep it for a comment-only change, and pin the new hash either way.
 
 ## Fields
 
@@ -47,7 +47,7 @@ All text first goes through `domain/text.py`: HTML to text, entities unescaped (
 
 The parsers are conservative: a missing value is better than a wrong one, because a wrong one misleads analytics and sends vacancies to subscribers they do not fit.
 
-- **Salary** (`domain/salary.py`). In free text, an amount counts only in two cases. Either the nearest keyword in its own sentence is a pay word (`зарплата`, `вилка`, `ставка`, `ЗП`, `Гроші:`, `💰`, `salary`, `compensation`, `rate`), or there is no keyword and the amount names its period (`$2,500/month`). Not-pay words (`бюджет`, `бонус`, `рекомендацію`, `deal`, `revenue`, `budget`) rule an amount out. So do per-day amounts and amounts outside plausible monthly bounds (USD/EUR 100–30 000, UAH 8 000–1 500 000). The salary is stored as stated (`salary_min`, `salary_max`, `salary_currency`, `salary_period`). An open range has one bound ("від 30 000 грн", "up to $2000").
+- **Salary** (`domain/salary.py`). In free text, an amount counts only in two cases. Either the nearest keyword in its own sentence is a pay word (`зарплата`, `вилка`, `ставка`, `ЗП`, `з/п`, `Гроші:`, `💰`, `salary`, `Compensation:`, `rate`), or there is no keyword and the amount names its period (`$2,500/month`). Not-pay words (`бюджет`, `бонус`, `рекомендацію`, `deal`, `revenue`, `budget`) rule an amount out, and so do benefits (`страхування`, `курси`, `обід`, `insurance`, `courses`, `lunch`). `compensation` is a pay word only as a label (`Compensation: $600–1100/month`): in running text it is usually a benefit ("compensation of English courses up to $200/month"). So do per-day amounts and amounts outside plausible monthly bounds (USD/EUR 100–30 000, UAH 8 000–1 500 000). The salary is stored as stated (`salary_min`, `salary_max`, `salary_currency`, `salary_period`). An open range has one bound ("від 30 000 грн", "up to $2000").
 - **Monthly USD** (`domain/money.py`):
   - the NBU rate of the Kyiv day the vacancy was published;
   - UAH through the USD rate, EUR through hryvnias;
@@ -56,7 +56,7 @@ The parsers are conservative: a missing value is better than a wrong one, becaus
   - whole dollars, rounded half up.
 - **Seniority** (`domain/seniority.py`): `intern < junior < middle < senior < lead`, from the title only. A title may name several (`Middle+ / Senior`), and all are kept so the vacancy matches a subscription to any of them. In aggregates per level, such a vacancy counts once in each.
 - **Work format** (`domain/work_format.py`): `remote`, `hybrid`, `office`, from explicit phrases only. Phrases like "повністю віддалений формат", `Work format: hybrid` or "працюємо в офісі" count, unless negated right after ("fully remote is not possible"). Bare words do not count: "hybrid cloud", "home office", "Office Manager". A city does not imply office work.
-- **Skills** (`domain/skills.py`): a dictionary of slugs and spellings. Ambiguous spellings match with their case (`Swift`, not `SWIFT`) or only inside a list of technologies (`Go`, `R`, `C`), so "Go live", "R&D" and "C-level" are not skills. `vacancy.skills` holds the slugs. The GIN index on it comes in stage 9, where it is measured.
+- **Skills** (`domain/skills.py`): a dictionary of slugs and spellings. Ambiguous spellings match with their case (`Swift`, not `SWIFT`) or only inside a list of technologies (`Go`, `R`, `C`), so "Go live", "R&D" and "C-level" are not skills. Phrases that contain a spelling but name something else are cut out first ("Go/No-Go", "RAG status", "Unity Catalog"), and `Airflow` matches only capitalized, not "airflow sensors". `vacancy.skills` holds the slugs. The GIN index on it comes in stage 9, where it is measured.
 
 ## Coverage on collected data
 
