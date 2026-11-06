@@ -58,6 +58,14 @@ TEXT_PHRASES: Final[dict[WorkFormat, str]] = {
 }
 
 
+# "fully remote is not possible": a phrase followed by its own negation.
+NEGATION = re.compile(
+    r"\ ?(?:\(|—|-|:)?\ ?(?:is\ |are\ )?(?:not\ (?:possible|available|an\ option|offered)|"
+    r"неможлив\w*|не\ (?:можлив|передбач|розгляда)\w*)",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 def _compile(words: str) -> re.Pattern[str]:
     return re.compile(rf"(?<!\w)(?:{words})(?!\w)", re.IGNORECASE | re.VERBOSE)
 
@@ -78,6 +86,11 @@ def detect_work_formats(
     found = set(flagged) | {
         fmt
         for fmt in WORK_FORMATS
-        if TITLE_PATTERNS[fmt].search(title) or TEXT_PATTERNS[fmt].search(text)
+        if _states(TITLE_PATTERNS[fmt], title) or _states(TEXT_PATTERNS[fmt], text)
     }
     return tuple(fmt for fmt in WORK_FORMATS if fmt in found)
+
+
+def _states(pattern: re.Pattern[str], text: str) -> bool:
+    """Whether the text has a match of `pattern` that is not negated right after."""
+    return any(not NEGATION.match(text, match.end()) for match in pattern.finditer(text))

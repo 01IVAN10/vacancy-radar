@@ -5,6 +5,10 @@ the normalized tables of later stages can be rebuilt from it at any time.
 `collect_run` records every collection attempt, so gaps and missed items can
 be found with SQL instead of reading job logs. `exchange_rate` caches the
 official NBU rates that salaries are converted with.
+
+`vacancy` is derived: one row per `raw_vacancy`, rebuilt by the reprocessing
+task whenever the raw item or the parsers change. `skill` mirrors the skill
+dictionary in `domain/skills.py`, so SQL can show skill names.
 """
 
 from datetime import date, datetime
@@ -18,15 +22,24 @@ from sqlalchemy import (
     Identity,
     Index,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vacancy_radar.db.base import Base
+from vacancy_radar.domain.seniority import LEVELS
+from vacancy_radar.domain.work_format import WORK_FORMATS
+
+
+def _known_values(column: str, values: tuple[str, ...]) -> str:
+    """A CHECK that an array column holds only the given values."""
+    listed = ", ".join(f"'{value}'" for value in values)
+    return f"{column} <@ ARRAY[{listed}]::text[]"
 
 
 class Source(Base):
@@ -112,3 +125,65 @@ class ExchangeRate(Base):
     day: Mapped[date] = mapped_column(primary_key=True)
     currency: Mapped[str] = mapped_column(String(3), primary_key=True)
     uah_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+
+
+class Vacancy(Base):
+    """A vacancy normalized from one `raw_vacancy` row.
+
+    The row is fully derived: deleting the raw item deletes it, and the
+    reprocessing task rewrites it when `raw_updated_at` no longer matches
+    the raw item or `normalizer_version` is older than the current parsers.
+
+    The salary is stored as the vacancy states it (`salary_*`) and as whole
+    US dollars per month (`salary_usd_*`), which is NULL for hourly rates.
+    """
+
+    __tablename__ = "vacancy"
+    __table_args__ = (
+        CheckConstraint("salary_currency IN ('USD', 'EUR', 'UAH')", name="salary_currency"),
+        CheckConstraint("salary_period IN ('month', 'year', 'hour')", name="salary_period"),
+        CheckConstraint("salary_min <= salary_max", name="salary_range"),
+        # A salary has a currency, a period and at least one bound, or none of them.
+        CheckConstraint(
+            "(salary_currency IS NULL) = (salary_period IS NULL) "
+            "AND (salary_currency IS NULL) = (salary_min IS NULL AND salary_max IS NULL)",
+            name="salary_complete",
+        ),
+        CheckConstraint(_known_values("seniority", LEVELS), name="seniority_known"),
+        CheckConstraint(_known_values("work_formats", WORK_FORMATS), name="work_formats_known"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    raw_vacancy_id: Mapped[int] = mapped_column(
+        ForeignKey("raw_vacancy.id", ondelete="CASCADE"), unique=True
+    )
+    source_id: Mapped[int] = mapped_column(ForeignKey("source.id", ondelete="RESTRICT"))
+    url: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    company: Mapped[str | None] = mapped_column(Text)
+    cities: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    category: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None]
+    salary_min: Mapped[int | None]
+    salary_max: Mapped[int | None]
+    salary_currency: Mapped[str | None] = mapped_column(String(3))
+    salary_period: Mapped[str | None] = mapped_column(String(8))
+    salary_usd_min: Mapped[int | None]
+    salary_usd_max: Mapped[int | None]
+    seniority: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    work_formats: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    # Slugs from `domain/skills.py`. The GIN index comes in stage 9, measured.
+    skills: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    normalizer_version: Mapped[int] = mapped_column(SmallInteger)
+    raw_updated_at: Mapped[datetime]
+    normalized_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class Skill(Base):
+    """One entry of the skill dictionary, synced from `domain/skills.py`."""
+
+    __tablename__ = "skill"
+
+    slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(16))

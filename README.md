@@ -44,6 +44,8 @@ uv run alembic upgrade head      # create or update the database schema
 | Apply migrations | `uv run alembic upgrade head` |
 | Collect all sources once | `uv run python -m vacancy_radar.collect` |
 | Collect one source, without writing to the database | `uv run python -m vacancy_radar.collect djinni --dry-run` |
+| Normalize new and changed items into `vacancy` | `uv run python -m vacancy_radar.normalize` |
+| Rebuild every vacancy after a parser change | `uv run python -m vacancy_radar.normalize --rebuild` |
 | New migration after a model change | `uv run alembic revision --autogenerate -m "<what changed>"` |
 
 Tests run against a real PostgreSQL database, because the project relies on FTS, GIN indexes, `pg_trgm` and `ON CONFLICT`. By default they use `vacancy_radar_test` on the Compose Postgres, create it on first run and apply the Alembic migrations to it. Each test runs inside a transaction that is rolled back afterwards. Set `TEST_DATABASE_URL` to use another server. The suite refuses to run against a database whose name does not end in `_test`. Tests that need Redis use database 15 on the Compose Redis and empty it around each test. Set `TEST_REDIS_URL` to use another one, but never the broker database of a running worker.
@@ -110,7 +112,7 @@ The data moves to the VPS at deploy time (stage 11 in [`PLAN.md`](PLAN.md)).
 
 On the VPS (stage 11), Celery replaces the GitHub Actions job. Locally, `docker compose up` already runs it:
 
-- **Beat** sends one `collect.fetch_source` task per source every 5 minutes. A message the worker hasn't picked up within 4 minutes is dropped, so tasks don't pile up while the worker is down.
+- **Beat** sends one `collect.fetch_source` task per source every 5 minutes. A message the worker hasn't picked up within 4 minutes is dropped, so tasks don't pile up while the worker is down. Every 10 minutes it also sends `normalize.pending`, which turns new and changed raw items into `vacancy` rows ([`docs/normalization.md`](docs/normalization.md)).
 - **The worker** runs the same `collect_if_due` as the CLI. It skips a disabled source, a source another collector is fetching right now (a Postgres advisory lock), and a source whose `min_interval` hasn't passed. Djinni is fetched every 25–30 minutes and DOU every 30–35.
 - **Rate limit:** every request first takes a token from a Redis token bucket for its domain, at most 1 request per second across all worker processes.
 - **Retries:** timeouts, network errors and 5xx are retried with exponential backoff (from 30 s, capped at 10 min) and full jitter, honouring a numeric `Retry-After`. Each source sets its own `max_retries`: Djinni 3, DOU 0, because DOU's consent counts retries as requests. 403 and 429 are never retried and are logged as `collect.blocked`.
@@ -131,6 +133,8 @@ src/vacancy_radar/
 ├── collect/    # due checks, idempotent storage, the collector CLI and the Celery task
 ├── db/         # SQLAlchemy models and sync/async engines
 ├── domain/     # pure functions: parsing, normalization, matching (no I/O)
+├── exchange/   # NBU exchange rates, cached in exchange_rate
+├── normalize/  # raw_vacancy → vacancy: the reprocessing CLI and the Celery task
 ├── sources/    # one adapter per source (fetch + parse), behind SourceAdapter
 ├── config.py   # settings from environment / .env
 ├── log.py      # structlog setup
