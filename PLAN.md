@@ -70,8 +70,8 @@ Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It a
 - [ ] Models `vacancy`, `skill`
 - [x] Salary parser: ranges, "від/до", UAH/USD/EUR
 - [ ] NBU exchange rates client, cached daily
-- [ ] Seniority and work-format detection
-- [ ] Skill dictionary with synonyms + extraction
+- [x] Seniority and work-format detection
+- [x] Skill dictionary with synonyms + extraction
 - [ ] Reprocessing task `raw_vacancy` → `vacancy`
 - [ ] Parametrized unit tests built from real collected examples
 
