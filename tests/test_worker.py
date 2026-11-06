@@ -5,8 +5,16 @@ import structlog
 
 from vacancy_radar.collect.tasks import FETCH_SOURCE, fetch_source
 from vacancy_radar.config import get_settings
+from vacancy_radar.normalize.tasks import NORMALIZE_PENDING
 from vacancy_radar.sources import ADAPTERS
-from vacancy_radar.worker import COLLECT_EVERY, celery_app, create_celery, ping, setup_structlog
+from vacancy_radar.worker import (
+    COLLECT_EVERY,
+    NORMALIZE_EVERY,
+    celery_app,
+    create_celery,
+    ping,
+    setup_structlog,
+)
 
 
 def test_ping_returns_pong() -> None:
@@ -17,7 +25,9 @@ def test_ping_returns_pong() -> None:
 def test_beat_offers_every_source_to_fetch_source() -> None:
     schedule = celery_app.conf.beat_schedule
 
-    assert set(schedule) == {f"fetch-{slug}" for slug in ADAPTERS}
+    assert {name for name in schedule if name.startswith("fetch-")} == {
+        f"fetch-{slug}" for slug in ADAPTERS
+    }
     for slug in ADAPTERS:
         entry = schedule[f"fetch-{slug}"]
         assert entry["task"] == FETCH_SOURCE
@@ -30,9 +40,17 @@ def test_beat_runs_more_often_than_any_source_may_be_fetched() -> None:
     assert all(adapter.min_interval > COLLECT_EVERY for adapter in ADAPTERS.values())
 
 
+def test_beat_sends_the_reprocessing_task() -> None:
+    entry = celery_app.conf.beat_schedule["normalize-pending"]
+
+    assert entry["task"] == NORMALIZE_PENDING
+    assert entry["schedule"] == NORMALIZE_EVERY
+    assert celery_app.tasks[NORMALIZE_PENDING].name == NORMALIZE_PENDING
+
+
 def test_unpicked_beat_messages_expire_before_the_next_one_is_sent() -> None:
     for entry in celery_app.conf.beat_schedule.values():
-        assert entry["options"]["expires"] < COLLECT_EVERY.total_seconds()
+        assert entry["options"]["expires"] < entry["schedule"].total_seconds()
 
 
 def test_collection_task_is_registered() -> None:

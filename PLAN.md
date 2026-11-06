@@ -9,9 +9,9 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 Updated 2026-11-06.
 
 - **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
-- **Next:** the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
 - **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
-- **Stage 5** (normalization) is in progress in four PRs: salary parser → vacancy attributes (seniority, work format, skills, DOU title) → NBU exchange rates → `vacancy` model and reprocessing. It runs in parallel with the wait for the findings PR, because it only reads `raw_vacancy`.
+- **Stage 5** is done: `raw_vacancy` is normalized into `vacancy` (salary in its currency and in monthly USD, seniority, work format, skills, DOU company and places) by `python -m vacancy_radar.normalize` and the Celery task `normalize.pending`. See `docs/normalization.md`. It runs locally only. Neon keeps accumulating raw data, and vacancies are rebuilt from it on the VPS (stage 11).
+- **Next:** stage 6 (auth and subscriptions). In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
 
 ## Phase A: Start accumulating data
 
@@ -67,13 +67,13 @@ Decision (2026-11-05): Neon Free, Postgres 16, region `eu-central-1`. It has 1 G
 Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It applies the kill switch, a Postgres advisory lock per source, and `min_interval`. Retries are per source (`max_retries`: Djinni 3, DOU 0, because DOU's consent counts retries as requests) and skip only the `min_interval` check. Beat offers each source every 5 minutes. Locally, Compose disables DOU, which GitHub Actions collects into Neon until stage 11.
 
 ### Stage 5: Normalization
-- [ ] Models `vacancy`, `skill`
+- [x] Models `vacancy`, `skill`
 - [x] Salary parser: ranges, "від/до", UAH/USD/EUR
 - [x] NBU exchange rates client, cached daily
 - [x] Seniority and work-format detection
 - [x] Skill dictionary with synonyms + extraction
-- [ ] Reprocessing task `raw_vacancy` → `vacancy`
-- [ ] Parametrized unit tests built from real collected examples
+- [x] Reprocessing task `raw_vacancy` → `vacancy`
+- [x] Parametrized unit tests built from real collected examples
 
 ### Stage 6: Auth and subscriptions
 - [ ] Models `user`, `subscription`

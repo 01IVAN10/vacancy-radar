@@ -129,7 +129,12 @@ def committed_database(
     get_sessionmaker.cache_clear()
     get_settings.cache_clear()
     with migrated_engine.begin() as connection:
-        connection.execute(text("TRUNCATE collect_run, raw_vacancy, source RESTART IDENTITY"))
+        connection.execute(
+            text(
+                "TRUNCATE vacancy, skill, exchange_rate, collect_run, raw_vacancy, source "
+                "RESTART IDENTITY"
+            )
+        )
 
 
 @pytest.fixture

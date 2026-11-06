@@ -1,7 +1,8 @@
 """Celery application for background workers and the Beat scheduler.
 
-Collection logic stays independent of Celery: the tasks in
-`vacancy_radar.collect.tasks` are thin wrappers around plain functions.
+Collection and reprocessing stay independent of Celery: the tasks in
+`vacancy_radar.collect.tasks` and `vacancy_radar.normalize.tasks` are thin
+wrappers around plain functions.
 """
 
 from collections.abc import Iterable
@@ -22,11 +23,18 @@ COLLECT_EVERY = timedelta(minutes=5)
 # A message the worker has not picked up by then is dropped instead of piling
 # up while the worker is down. The next Beat run replaces it.
 COLLECT_EXPIRES_SECONDS = 240
+# How often Beat sends the reprocessing task. Each run handles only pending
+# raw items, so most runs find nothing to do and finish at once.
+NORMALIZE_EVERY = timedelta(minutes=10)
+NORMALIZE_EXPIRES_SECONDS = 540
 
 
 def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str, Any]]:
-    """One `fetch_source` entry per source, so a slow source never delays another."""
-    return {
+    """The reprocessing task, and one `fetch_source` entry per source.
+
+    Separate entries per source mean a slow source never delays another.
+    """
+    schedule: dict[str, dict[str, Any]] = {
         f"fetch-{adapter.slug}": {
             "task": "collect.fetch_source",
             "schedule": COLLECT_EVERY,
@@ -35,6 +43,12 @@ def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str
         }
         for adapter in adapters
     }
+    schedule["normalize-pending"] = {
+        "task": "normalize.pending",
+        "schedule": NORMALIZE_EVERY,
+        "options": {"expires": NORMALIZE_EXPIRES_SECONDS},
+    }
+    return schedule
 
 
 def create_celery() -> Celery:
@@ -46,7 +60,7 @@ def create_celery() -> Celery:
         "vacancy_radar",
         broker=str(redis_url),
         backend=str(redis_url),
-        include=["vacancy_radar.collect.tasks"],
+        include=["vacancy_radar.collect.tasks", "vacancy_radar.normalize.tasks"],
     )
     app.conf.update(
         task_acks_late=True,

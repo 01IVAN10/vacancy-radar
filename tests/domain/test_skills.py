@@ -54,6 +54,9 @@ from vacancy_radar.sources import djinni
         ),
         pytest.param("Golang is a strong plus", ("go",), id="golang"),
         # Words that only look like a skill.
+        pytest.param(
+            "native iOS SDKs (Swift / Objective-C).", ("ios", "objective-c", "swift"), id="objc"
+        ),
         pytest.param("Інженер-пілот БпЛА (R&D)", (), id="r-and-d"),
         pytest.param("R/D Engineer", (), id="r-slash-d"),
         pytest.param("communicating with founders, C-level executives", (), id="c-level"),

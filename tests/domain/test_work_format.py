@@ -63,6 +63,13 @@ def test_reads_formats_from_the_title(title: str, expected: tuple[WorkFormat, ..
             id="bare-words-in-a-list-are-not-enough",
         ),
         # Not a work format.
+        pytest.param(
+            "Ability to work from the Warsaw office most days (fully remote is not possible)",
+            (),
+            id="negated-remote",
+        ),
+        pytest.param("Віддалена робота неможлива.", (), id="negated-remote-ua"),
+        pytest.param("Remote work: not available", (), id="negated-label"),
         pytest.param("experience with hybrid cloud deployments", (), id="hybrid-cloud"),
         pytest.param("home office budget. laptop or", (), id="home-office"),
         pytest.param("Microsoft Office, антивірус", (), id="microsoft-office"),

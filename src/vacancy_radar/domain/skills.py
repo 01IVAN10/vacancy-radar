@@ -226,6 +226,8 @@ AFTER = r"(?![\w#+]|\.\w)"
 # A list neighbour for `listed` spellings: "Python, R, SQL", "C/C++", "(Go)".
 LIST_BEFORE = r"(?<=[,/(|] )|(?<=[,/(|])"
 LIST_AFTER = r"(?=\ ?[,/)|])"
+# Stricter on both sides: not "C-level", "R&D", or the "C" of "Objective-C".
+LISTED_BEFORE = r"(?<![\w#+.-])"
 LISTED_AFTER = r"(?![\w#+&-]|\.\w)"
 
 
@@ -243,7 +245,8 @@ def _pattern(skill: Skill) -> re.Pattern[str]:
     if skill.listed:
         listed = _alternation(skill.listed)
         parts.append(
-            rf"(?:{LIST_BEFORE})(?:{listed}){LISTED_AFTER}|{BEFORE}(?:{listed}){LIST_AFTER}"
+            rf"(?:{LIST_BEFORE})(?:{listed}){LISTED_AFTER}"
+            rf"|{LISTED_BEFORE}(?:{listed}){LIST_AFTER}"
         )
     return re.compile("|".join(parts))
 
