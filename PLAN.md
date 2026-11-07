@@ -91,7 +91,7 @@ Decisions (2026-11-07): the account table is `app_user`, because `user` is reser
 ### Stage 7: Telegram
 - [ ] Bot API client on httpx
 - [ ] Deep-link account linking with a one-time token
-- [ ] Subscription matching in `domain/`
+- [x] Subscription matching in `domain/`
 - [ ] Model `notification` with unique `(subscription_id, cluster_id)`
 - [ ] Send task with Telegram 429 handling
 - [ ] Tests: matching, no duplicate sends on rerun

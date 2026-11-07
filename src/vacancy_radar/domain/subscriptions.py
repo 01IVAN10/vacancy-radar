@@ -11,7 +11,7 @@ skills are chosen, since with fewer it changes nothing, and whether
 vacancies without a salary count exists only together with a minimum
 salary (`SalaryFloor`).
 
-Matching a vacancy against the filter comes in stage 7.
+Matching a vacancy against the filter lives in `domain/matching.py`.
 """
 
 import re

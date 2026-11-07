@@ -15,7 +15,22 @@ A subscription is a saved filter over normalized vacancies. New vacancies that m
 
 At least one of skills, seniority, work format or minimum salary must be set, because a subscription without criteria would match every vacancy. `include_unsalaried` defaults to yes because only about 5% of vacancies state a salary (15 of 302 in the local data on 2026-11-06), so without it a minimum would filter out nearly everything. `skills_match` is a choice because skill extraction misses skills that a vacancy does mention: `all` gives fewer, more precise matches and misses more.
 
-How a vacancy with an empty field, such as no detected seniority, compares against a criterion is decided with matching in stage 7.
+## Matching
+
+`matches(filter, vacancy)` in `domain/matching.py` decides whether a normalized vacancy fits a filter. Every criterion the filter sets must hold, and an empty criterion holds for any vacancy. A vacancy field that normalization left empty is read per field, because each one is empty for a different reason:
+
+| Criterion | The vacancy matches when | A vacancy where the field is empty |
+|---|---|---|
+| `skills`, `any` | it lists at least one of the skills | does not match |
+| `skills`, `all` | it lists every one of the skills | does not match |
+| `seniority` | it names at least one of the levels | matches |
+| `work_formats` | it offers at least one of the formats | matches |
+| `min_salary_usd` | the top of its monthly USD range reaches the minimum | `include_unsalaried` decides |
+
+- **Skills** are what a skills filter is about, so a vacancy where none were found is not sent for one. Skill extraction does miss skills, which is what `any` is for.
+- **Seniority and work format** are found far less often: in the local data on 2026-11-07, 201 of 302 vacancies name no level and 166 no format. Seniority is read from the title only, and a work format counts only when stated explicitly (`docs/normalization.md`). An empty value means unknown, not "none of these", so it matches. Treating it as a mismatch would hide two thirds of the market from a subscription to senior roles.
+- **Salary** compares the top of the range, the upper bound or the lower one when that is all there is, because the vacancy may pay that much: "$2,000–4,000" and "from $3,000" match a minimum of 3,000, "up to $2,500" does not. The comparison uses the monthly dollar figure (`salary_usd_*`). A vacancy without one, because it states no salary, states an hourly rate, or has not been converted yet, is treated like one without a salary, and `include_unsalaried` decides.
+- A skill that has left the dictionary matches no vacancy, as described under the rules below.
 
 ## Canonical form
 
