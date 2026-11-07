@@ -1,14 +1,14 @@
 from http.cookies import SimpleCookie
 
 import pytest
-from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.support import PASSWORD, TEST_SECRET_KEY, add_user, csrf_token, sign_in
 from vacancy_radar.api.app import create_app
-from vacancy_radar.api.deps import CurrentUser, Sessions
+from vacancy_radar.api.auth import AFTER_SIGN_IN
+from vacancy_radar.api.deps import Sessions
 from vacancy_radar.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from vacancy_radar.auth.service import EMAIL_TAKEN
 from vacancy_radar.auth.session import SESSION_COOKIE
@@ -33,14 +33,9 @@ async def post_form(client: AsyncClient, url: str, data: dict[str, str]) -> Resp
 
 
 @pytest.fixture
-def protected(app: FastAPI) -> str:
-    """A page that requires sign-in, until the subscription pages exist."""
-
-    @app.get("/protected")
-    async def protected_page(user: CurrentUser) -> dict[str, str]:
-        return {"email": user.email}
-
-    return "/protected"
+def protected() -> str:
+    """A page that requires sign-in."""
+    return "/subscriptions"
 
 
 async def test_first_page_view_sets_the_csrf_cookie(client: AsyncClient) -> None:
@@ -78,7 +73,7 @@ async def test_register_signs_the_user_in(client: AsyncClient, async_session: As
     )
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == AFTER_SIGN_IN
     session_cookie = set_cookie(response, SESSION_COOKIE)[SESSION_COOKIE]
     assert session_cookie["httponly"]
     assert session_cookie["samesite"] == "lax"
@@ -183,7 +178,7 @@ async def test_signed_in_user_skips_the_sign_in_pages(
         response = await client.get(url)
 
         assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == AFTER_SIGN_IN
 
 
 async def test_protected_page_redirects_to_sign_in_and_back(
@@ -192,9 +187,9 @@ async def test_protected_page_redirects_to_sign_in_and_back(
     response = await client.get(f"{protected}?page=2")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/login?next=%2Fprotected%3Fpage%3D2"
+    assert response.headers["location"] == "/login?next=%2Fsubscriptions%3Fpage%3D2"
     login = await client.get(response.headers["location"])
-    assert 'name="next" value="/protected?page=2"' in login.text
+    assert 'name="next" value="/subscriptions?page=2"' in login.text
 
 
 async def test_protected_page_tells_htmx_to_load_the_sign_in_page(
@@ -203,7 +198,7 @@ async def test_protected_page_tells_htmx_to_load_the_sign_in_page(
     response = await client.get(protected, headers={"HX-Request": "true"})
 
     assert response.status_code == 401
-    assert response.headers["HX-Redirect"] == "/login?next=%2Fprotected"
+    assert response.headers["HX-Redirect"] == "/login?next=%2Fsubscriptions"
 
 
 async def test_protected_page_serves_the_signed_in_user(
@@ -213,7 +208,8 @@ async def test_protected_page_serves_the_signed_in_user(
 
     response = await client.get(protected)
 
-    assert response.json() == {"email": "ivan@example.com"}
+    assert response.status_code == 200
+    assert "ivan@example.com" in response.text
 
 
 async def test_garbage_session_cookie_means_signed_out(client: AsyncClient, protected: str) -> None:
@@ -255,7 +251,7 @@ async def test_login_never_redirects_off_site(
         client, "/login", {"email": "ivan@example.com", "password": PASSWORD, "next": target}
     )
 
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == AFTER_SIGN_IN
 
 
 @pytest.mark.parametrize("url", ["/register", "/login", "/logout"])
@@ -398,7 +394,7 @@ async def test_sign_up_never_redirects_off_site(client: AsyncClient) -> None:
         {"email": "ivan@example.com", "password": PASSWORD, "next": "//evil.example"},
     )
 
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == AFTER_SIGN_IN
 
 
 async def test_htmx_returns_to_the_page_not_the_fragment(

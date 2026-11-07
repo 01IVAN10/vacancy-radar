@@ -1,11 +1,12 @@
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from vacancy_radar.db.models import CollectRun, RawVacancy, Source, User
+from vacancy_radar.db.models import CollectRun, RawVacancy, Source, Subscription, User
 
 
 def add_source(session: Session, slug: str) -> Source:
@@ -119,3 +120,60 @@ def test_user_email_must_be_lower_case(db_session: Session) -> None:
 
     with pytest.raises(IntegrityError, match="ck_app_user_email_lowercase"):
         db_session.flush()
+
+
+def subscription(user: User, **changes: Any) -> Subscription:
+    values: dict[str, Any] = {
+        "name": "Python remote",
+        "skills": ["python"],
+        "skills_match": "any",
+        "seniority": [],
+        "work_formats": [],
+    }
+    return Subscription(user_id=user.id, **(values | changes))
+
+
+def test_subscription_defaults_to_active_and_including_unsalaried(db_session: Session) -> None:
+    user = User(email="ivan@example.com", password_hash="x")
+    db_session.add(user)
+    db_session.flush()
+    row = subscription(user)
+    db_session.add(row)
+    db_session.flush()
+    db_session.refresh(row)
+
+    assert (row.is_active, row.include_unsalaried, row.min_salary_usd) == (True, True, None)
+    assert row.updated_at == row.created_at
+
+
+@pytest.mark.parametrize(
+    ("changes", "constraint"),
+    [
+        ({"name": ""}, "ck_subscription_name_length"),
+        ({"name": "x" * 81}, "ck_subscription_name_length"),
+        ({"skills_match": "one"}, "ck_subscription_skills_match"),
+        ({"seniority": ["guru"]}, "ck_subscription_seniority_known"),
+        ({"work_formats": ["beach"]}, "ck_subscription_work_formats_known"),
+        ({"min_salary_usd": 0}, "ck_subscription_min_salary_usd_positive"),
+    ],
+)
+def test_subscription_constraints(
+    db_session: Session, changes: dict[str, Any], constraint: str
+) -> None:
+    user = User(email="ivan@example.com", password_hash="x")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(subscription(user, **changes))
+
+    with pytest.raises(IntegrityError, match=constraint):
+        db_session.flush()
+
+
+def test_unknown_skill_slugs_are_allowed_in_the_database(db_session: Session) -> None:
+    # The dictionary changes; a removed skill must not invalidate stored rows.
+    user = User(email="ivan@example.com", password_hash="x")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(subscription(user, skills=["removed-skill"]))
+
+    db_session.flush()

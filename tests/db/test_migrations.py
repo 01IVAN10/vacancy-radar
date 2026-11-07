@@ -24,9 +24,14 @@ def test_downgrade_and_upgrade_round_trip(migrated_engine: Engine, test_database
     command.upgrade(config, "head")
 
     assert tables_after_downgrade <= {"alembic_version"}
-    assert {"source", "raw_vacancy", "collect_run", "exchange_rate", "app_user"} <= set(
-        inspect(migrated_engine).get_table_names()
-    )
+    assert {
+        "source",
+        "raw_vacancy",
+        "collect_run",
+        "exchange_rate",
+        "app_user",
+        "subscription",
+    } <= set(inspect(migrated_engine).get_table_names())
 
 
 def test_downgrade_keeps_an_interrupted_run_as_a_failed_request(

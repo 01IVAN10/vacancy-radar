@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} · Vacancy Radar{% endblock %}
+{% block content %}
+<article>
+  <h1>{{ heading }}</h1>
+  <form method="post" action="{{ action }}" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if errors.filter %}<p role="alert"><mark>{{ errors.filter }}</mark></p>{% endif %}
+
+    <label>
+      Name
+      <input type="text" name="name" value="{{ form.name }}" maxlength="80" required
+             placeholder="Python, remote, from $3,000"
+             {% if errors.name %}aria-invalid="true" aria-describedby="name-error"{% endif %}>
+      {% if errors.name %}<small id="name-error">{{ errors.name }}</small>{% endif %}
+    </label>
+
+    <fieldset>
+      <legend>Skills</legend>
+      {% if errors.skills %}<small role="alert">{{ errors.skills }}</small>{% endif %}
+      {% for label, skills in skill_groups %}
+        {% set chosen = skills | selectattr("slug", "in", form.skills) | list %}
+        <details{% if chosen %} open{% endif %}>
+          <summary>{{ label }}{% if chosen %} ({{ chosen | length }}){% endif %}</summary>
+          <div class="choices">
+            {% for skill in skills %}
+              <label>
+                <input type="checkbox" name="skills" value="{{ skill.slug }}"
+                       {% if skill.slug in form.skills %}checked{% endif %}>
+                {{ skill.name }}
+              </label>
+            {% endfor %}
+          </div>
+        </details>
+      {% endfor %}
+      <small>A vacancy matches when it lists</small>
+      <label>
+        <input type="radio" name="skills_match" value="any" {% if form.skills_match != "all" %}checked{% endif %}>
+        any of the chosen skills
+      </label>
+      <label>
+        <input type="radio" name="skills_match" value="all" {% if form.skills_match == "all" %}checked{% endif %}>
+        all of them
+      </label>
+      {% if errors.skills_match %}<small role="alert">{{ errors.skills_match }}</small>{% endif %}
+    </fieldset>
+
+    <fieldset>
+      <legend>Seniority</legend>
+      {% for value, label in levels.items() %}
+        <label>
+          <input type="checkbox" name="seniority" value="{{ value }}"
+                 {% if value in form.seniority %}checked{% endif %}>
+          {{ label }}
+        </label>
+      {% endfor %}
+      {% if errors.seniority %}<small role="alert">{{ errors.seniority }}</small>{% endif %}
+    </fieldset>
+
+    <fieldset>
+      <legend>Work format</legend>
+      {% for value, label in formats.items() %}
+        <label>
+          <input type="checkbox" name="work_formats" value="{{ value }}"
+                 {% if value in form.work_formats %}checked{% endif %}>
+          {{ label }}
+        </label>
+      {% endfor %}
+      {% if errors.work_formats %}<small role="alert">{{ errors.work_formats }}</small>{% endif %}
+    </fieldset>
+
+    <fieldset>
+      <legend>Salary</legend>
+      <label>
+        Minimum, US dollars per month
+        <input type="text" name="min_salary_usd" value="{{ form.min_salary_usd }}"
+               inputmode="numeric" placeholder="3000"
+               {% if errors.min_salary_usd %}aria-invalid="true" aria-describedby="salary-error"{% endif %}>
+        {% if errors.min_salary_usd %}<small id="salary-error">{{ errors.min_salary_usd }}</small>{% endif %}
+      </label>
+      <label>
+        <input type="checkbox" name="include_unsalaried" {% if form.include_unsalaried %}checked{% endif %}>
+        Also include vacancies that state no salary
+      </label>
+      <small>Most vacancies do not state a salary, so without this a minimum filters out nearly all of them.</small>
+    </fieldset>
+
+    <p><small>Leave a group empty to accept any value. Choose at least one criterion.</small></p>
+    <div class="grid">
+      <button type="submit">Save</button>
+      <a href="/subscriptions" role="button" class="secondary outline">Cancel</a>
+    </div>
+  </form>
+</article>
+{% endblock %}

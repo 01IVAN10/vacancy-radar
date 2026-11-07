@@ -19,7 +19,7 @@ curl http://localhost:8000/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-The site is at http://localhost:8000, where you can sign up and sign in. Its pages need the database schema, which is applied from the host with `uv run alembic upgrade head` (see [Development](#development)). How accounts, cookies and CSRF tokens work is described in [`docs/auth.md`](docs/auth.md).
+The site is at http://localhost:8000, where you can sign up and sign in. Its pages need the database schema, which is applied from the host with `uv run alembic upgrade head` (see [Development](#development)). How accounts, cookies and CSRF tokens work is described in [`docs/auth.md`](docs/auth.md), and subscriptions in [`docs/subscriptions.md`](docs/subscriptions.md).
 
 To override settings, copy `.env.example` to `.env` and edit it.
 
@@ -139,6 +139,7 @@ src/vacancy_radar/
 ├── exchange/   # NBU exchange rates, cached in exchange_rate
 ├── normalize/  # raw_vacancy → vacancy: the reprocessing CLI and the Celery task
 ├── sources/    # one adapter per source (fetch + parse), behind SourceAdapter
+├── subscriptions/  # storing each account's subscriptions, scoped to the owner
 ├── config.py   # settings from environment / .env
 ├── log.py      # structlog setup
 └── worker.py   # Celery app for the worker and Beat

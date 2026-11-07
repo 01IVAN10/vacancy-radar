@@ -6,6 +6,7 @@
 </hgroup>
 {% if user %}
   <p>You are signed in as {{ user.email }}.</p>
+  <p><a href="/subscriptions" role="button">Your subscriptions</a></p>
 {% else %}
   <p><a href="/register" role="button">Create an account</a> <a href="/login">or sign in</a></p>
 {% endif %}

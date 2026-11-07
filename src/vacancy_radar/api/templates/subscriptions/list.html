@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Subscriptions · Vacancy Radar{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>Subscriptions</h1>
+  <p>New vacancies that match an active subscription will be sent to your Telegram.</p>
+</hgroup>
+{% if rows %}
+  <table>
+    <thead>
+      <tr><th scope="col">Subscription</th><th scope="col">Status</th><th scope="col"></th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}{% include "subscriptions/_row.html" %}{% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>You have no subscriptions yet.</p>
+{% endif %}
+{% if at_limit %}
+  <p><small>You have reached the limit of {{ limit }} subscriptions.</small></p>
+{% else %}
+  <p><a href="/subscriptions/new" role="button">New subscription</a></p>
+{% endif %}
+{% endblock %}
