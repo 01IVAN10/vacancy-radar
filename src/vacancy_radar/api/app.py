@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from vacancy_radar import __version__
-from vacancy_radar.api import auth, health, pages, subscriptions
+from vacancy_radar.api import auth, health, pages, subscriptions, telegram
 from vacancy_radar.api.deps import LoginRequiredError, Sessions, WebConfig
 from vacancy_radar.api.middleware import CurrentUserMiddleware
 from vacancy_radar.api.templating import templates
@@ -31,6 +31,7 @@ def create_app(settings: Settings | None = None, sessions: Sessions | None = Non
         secret_key=settings.secret_key.get_secret_value(),
         cookie_secure=settings.cookie_secure,
         sessions=sessions or get_async_sessionmaker(),
+        telegram_bot_username=settings.telegram_bot_username,
     )
 
     app = FastAPI(title="Vacancy Radar", version=__version__)
@@ -43,6 +44,7 @@ def create_app(settings: Settings | None = None, sessions: Sessions | None = Non
     app.include_router(pages.router)
     app.include_router(auth.router)
     app.include_router(subscriptions.router)
+    app.include_router(telegram.router)
     return app
 
 

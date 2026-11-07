@@ -14,6 +14,9 @@ def env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.delenv("DISABLED_SOURCES", raising=False)
     monkeypatch.delenv("SECRET_KEY", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_USERNAME", raising=False)
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("REDIS_URL", REDIS_URL)
     return monkeypatch
@@ -123,3 +126,75 @@ def test_cookies_are_secure_in_production_only(
     env.setenv("APP_ENV", app_env)
 
     assert load().cookie_secure is secure
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_telegram_is_optional(env: pytest.MonkeyPatch, value: str) -> None:
+    # `.env.example` ships `TELEGRAM_BOT_TOKEN=` empty; that means no bot.
+    env.setenv("TELEGRAM_BOT_TOKEN", value)
+    env.setenv("TELEGRAM_BOT_USERNAME", value)
+
+    settings = load()
+
+    assert (settings.telegram_bot_token, settings.telegram_bot_username) == (None, None)
+
+
+def test_telegram_bot_token_is_hidden(env: pytest.MonkeyPatch) -> None:
+    token = "7000000001:AAsecret-token-value"
+    env.setenv("TELEGRAM_BOT_TOKEN", token)
+    settings = load()
+
+    assert settings.telegram_bot_token is not None
+    assert settings.telegram_bot_token.get_secret_value() == token
+    assert token not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("vacancy_radar_bot", "vacancy_radar_bot"),
+        ("@VacancyRadarBot", "VacancyRadarBot"),  # as BotFather shows it
+        (" vacancy_radar_bot ", "vacancy_radar_bot"),
+    ],
+)
+def test_telegram_bot_username(env: pytest.MonkeyPatch, value: str, expected: str) -> None:
+    env.setenv("TELEGRAM_BOT_USERNAME", value)
+
+    assert load().telegram_bot_username == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "vacancy_radar",  # does not end in "bot"
+        "abot",  # too short
+        "a" * 30 + "bot",  # too long
+        "radar-bot",  # a character usernames cannot have
+        "1radar_bot",  # starts with a digit
+        "radar_bot?start=x",  # would break the deep link
+    ],
+)
+def test_telegram_bot_username_rejects_what_telegram_does(
+    env: pytest.MonkeyPatch, value: str
+) -> None:
+    env.setenv("TELEGRAM_BOT_USERNAME", value)
+
+    with pytest.raises(ValidationError, match="bot username"):
+        load()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, "http://localhost:8000"),
+        ("https://radar.example/", "https://radar.example"),
+        ("https://radar.example/app", "https://radar.example/app"),
+    ],
+)
+def test_site_url_has_no_trailing_slash(
+    env: pytest.MonkeyPatch, value: str | None, expected: str
+) -> None:
+    if value is not None:
+        env.setenv("PUBLIC_BASE_URL", value)
+
+    assert load().site_url == expected

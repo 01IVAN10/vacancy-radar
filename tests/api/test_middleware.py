@@ -29,7 +29,13 @@ async def send(message: Message) -> None:
     "middleware",
     [
         lambda app: CurrentUserMiddleware(
-            app, config=WebConfig(TEST_SECRET_KEY, cookie_secure=False, sessions=no_sessions)
+            app,
+            config=WebConfig(
+                TEST_SECRET_KEY,
+                cookie_secure=False,
+                sessions=no_sessions,
+                telegram_bot_username=None,
+            ),
         ),
         lambda app: CSRFCookieMiddleware(app, secure=False),
     ],

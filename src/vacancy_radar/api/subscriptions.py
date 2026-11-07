@@ -89,6 +89,7 @@ Submitted = Annotated[SubscriptionForm, Depends(submitted_form)]
 @router.get("", response_class=HTMLResponse, name="subscriptions_list")
 async def list_page(request: Request, session: DbSession, user: CurrentUser) -> HTMLResponse:
     context = await _list_context(session, user.id)
+    context["telegram_linked"] = user.telegram_linked_at is not None
     return templates.TemplateResponse(request, "subscriptions/list.html", context)
 
 

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from tests.support import (
     DEFAULT_TEST_DATABASE_URL,
     PASSWORD,
+    TEST_BOT_USERNAME,
     TEST_SECRET_KEY,
     alembic_config,
     redis_test_url,
@@ -39,6 +40,10 @@ os.environ.setdefault(
 )
 os.environ.setdefault("REDIS_URL", redis_test_url())
 os.environ.setdefault("SECRET_KEY", TEST_SECRET_KEY)
+# A made-up bot, and no token: a developer's `.env` may hold a real bot, and
+# no test may reach it.
+os.environ.setdefault("TELEGRAM_BOT_USERNAME", TEST_BOT_USERNAME)
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
 
 
 @pytest.fixture
@@ -141,7 +146,7 @@ def committed_database(
         connection.execute(
             text(
                 "TRUNCATE vacancy, skill, exchange_rate, collect_run, raw_vacancy, source, "
-                "subscription, app_user RESTART IDENTITY"
+                "subscription, telegram_link_token, app_user RESTART IDENTITY"
             )
         )
 

@@ -11,7 +11,8 @@ task whenever the raw item or the parsers change. `skill` mirrors the skill
 dictionary in `domain/skills.py`, so SQL can show skill names.
 
 `app_user` holds accounts, and `subscription` the filters each account
-wants vacancies sent for. `app_user` is not called `user` because that is a
+wants vacancies sent for. `telegram_link_token` holds the one-time tokens
+that link an account to a Telegram chat. `app_user` is not called `user` because that is a
 reserved word in Postgres: an unquoted `SELECT * FROM user` returns the
 name of the current database role instead of failing.
 """
@@ -217,16 +218,42 @@ class User(Base):
     Emails are stored in lower case, and a CHECK keeps it that way, so the
     unique constraint is case-insensitive without `citext` or an expression
     index.
+
+    `telegram_chat_id` is the private chat matches are sent to, set by
+    `/start` with a link token. It is unique: one chat belongs to one
+    account. It is set together with `telegram_linked_at`, or neither is.
     """
 
     __tablename__ = "app_user"
-    __table_args__ = (CheckConstraint("email = lower(email)", name="email_lowercase"),)
+    __table_args__ = (
+        CheckConstraint("email = lower(email)", name="email_lowercase"),
+        CheckConstraint(
+            "(telegram_chat_id IS NULL) = (telegram_linked_at IS NULL)", name="telegram_linked"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     email: Mapped[str] = mapped_column(Text, unique=True)
     # Argon2 in PHC string format, parameters included, as pwdlib writes it.
     password_hash: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    telegram_linked_at: Mapped[datetime | None]
+
+
+class TelegramLinkToken(Base):
+    """A one-time token that links the account to the Telegram chat that sends it.
+
+    Only its SHA-256 hash is stored, so the table does not hold a usable
+    token. An account has at most one: asking for a new link replaces it.
+    Using it deletes it.
+    """
+
+    __tablename__ = "telegram_link_token"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"), unique=True)
+    expires_at: Mapped[datetime]
 
 
 class Subscription(Base):

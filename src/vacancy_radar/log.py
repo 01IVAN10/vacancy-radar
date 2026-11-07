@@ -2,8 +2,15 @@
 
 import logging
 import sys
+from typing import Final
 
 import structlog
+
+# httpx and httpcore log every request with its full URL at INFO, and the
+# Telegram Bot API puts the bot token in the URL path. Celery attaches a
+# handler to the root logger at the worker's level, so without this the
+# token would reach the worker's log.
+QUIET_LOGGERS: Final = ("httpx", "httpcore")
 
 
 def configure_logging(level: str = "INFO", *, json: bool | None = None) -> None:
@@ -14,6 +21,8 @@ def configure_logging(level: str = "INFO", *, json: bool | None = None) -> None:
     """
     if json is None:
         json = not sys.stderr.isatty()
+    for name in QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     renderer: structlog.typing.Processor = (
         structlog.processors.JSONRenderer() if json else structlog.dev.ConsoleRenderer()

@@ -17,6 +17,8 @@ DEFAULT_TEST_DATABASE_URL = (
 )
 # Long enough for `signing_key`, and obviously not a real key.
 TEST_SECRET_KEY = "test-only-secret-key-not-used-anywhere-else"
+# The bot the web app links to in tests. Not a real bot.
+TEST_BOT_USERNAME = "vacancy_radar_test_bot"
 # The password of every account `add_user` creates.
 PASSWORD = "correct horse battery staple"
 # Redis database 15, away from db 0 that the local Compose stack uses as its broker.

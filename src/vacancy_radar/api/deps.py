@@ -22,6 +22,8 @@ class WebConfig:
     secret_key: str
     cookie_secure: bool
     sessions: Sessions
+    # None until a bot is set up; the Telegram page then says linking is off.
+    telegram_bot_username: str | None
 
 
 def web_config(request: Request) -> WebConfig:

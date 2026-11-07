@@ -5,5 +5,9 @@
   <h1>Subscriptions</h1>
   <p>New vacancies that match an active subscription will be sent to your Telegram.</p>
 </hgroup>
+{% if not telegram_linked %}
+  <p><mark>No Telegram chat is linked, so nothing is sent yet.</mark>
+     <a href="{{ url_for('telegram_page').path }}">Link Telegram</a></p>
+{% endif %}
 {% include "subscriptions/_list.html" %}
 {% endblock %}
