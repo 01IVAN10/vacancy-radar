@@ -1,0 +1,20 @@
+{# The part of the list page that a pause or delete re-renders through HTMX. #}
+<div id="subscriptions">
+  {% if rows %}
+    <table>
+      <thead>
+        <tr><th scope="col">Subscription</th><th scope="col">Status</th><th scope="col"></th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}{% include "subscriptions/_row.html" %}{% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>You have no subscriptions yet.</p>
+  {% endif %}
+  {% if at_limit %}
+    <p><small>{{ limit_message }}</small></p>
+  {% else %}
+    <p><a href="{{ url_for('subscriptions_new').path }}" role="button">New subscription</a></p>
+  {% endif %}
+</div>

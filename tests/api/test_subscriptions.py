@@ -1,4 +1,6 @@
 import re
+from dataclasses import replace
+from typing import Any, get_args
 
 import pytest
 from httpx import AsyncClient, Response
@@ -6,8 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.support import add_user, csrf_token, sign_in
-from vacancy_radar.api.subscriptions import describe
+from vacancy_radar.api.subscriptions import CATEGORY_LABELS, describe
 from vacancy_radar.db.models import Subscription, User
+from vacancy_radar.domain.skills import SKILLS, Category
+from vacancy_radar.domain.subscriptions import SalaryFloor, SubscriptionFilter
 from vacancy_radar.subscriptions.service import MAX_SUBSCRIPTIONS
 
 pytestmark = pytest.mark.anyio
@@ -23,6 +27,7 @@ FORM: FormData = {
     "min_salary_usd": "3000",
     "include_unsalaried": "on",
 }
+HTMX = {"HX-Request": "true"}
 
 
 @pytest.fixture
@@ -37,17 +42,21 @@ async def owner(client: AsyncClient, async_session: AsyncSession, password_hash:
 async def strangers(async_session: AsyncSession, password_hash: str) -> Subscription:
     """A subscription of another account."""
     stranger = await add_user(async_session, password_hash, "stranger@example.com")
-    subscription = Subscription(
-        user_id=stranger.id,
-        name="Not yours",
-        skills=["go"],
-        skills_match="any",
-        seniority=[],
-        work_formats=[],
-    )
+    subscription = row(stranger.id, name="Not yours", skills=["go"])
     async_session.add(subscription)
     await async_session.commit()
     return subscription
+
+
+def row(user_id: int, **changes: Any) -> Subscription:
+    values: dict[str, Any] = {
+        "name": "Python remote",
+        "skills": ["python"],
+        "skills_match": "any",
+        "seniority": [],
+        "work_formats": [],
+    }
+    return Subscription(user_id=user_id, **(values | changes))
 
 
 async def post(
@@ -65,7 +74,16 @@ async def create(client: AsyncClient, **changes: str | list[str]) -> Response:
 
 
 async def stored(async_session: AsyncSession) -> list[Subscription]:
-    return list(await async_session.scalars(select(Subscription).order_by(Subscription.id)))
+    rows = await async_session.scalars(
+        select(Subscription).order_by(Subscription.id).execution_options(populate_existing=True)
+    )
+    return list(rows)
+
+
+async def fill_to_the_limit(async_session: AsyncSession, owner: User) -> None:
+    owner_id = owner.id
+    async_session.add_all(row(owner_id, name=f"#{number}") for number in range(MAX_SUBSCRIPTIONS))
+    await async_session.commit()
 
 
 async def test_signed_out_visitor_is_sent_to_sign_in(client: AsyncClient) -> None:
@@ -93,9 +111,16 @@ async def test_new_form_has_every_skill_and_sensible_defaults(
     response = await client.get("/subscriptions/new")
 
     assert response.status_code == 200
-    assert response.text.count('name="skills"') == 131
+    assert "New subscription" in response.text
+    assert 'action="/subscriptions"' in response.text
+    assert response.text.count('name="skills"') == len(SKILLS)
     assert re.search(r'value="any"\s+checked', response.text)
     assert re.search(r'name="include_unsalaried"\s+checked', response.text)
+
+
+def test_every_skill_category_has_a_form_group() -> None:
+    # A category without a label would drop its skills from the form.
+    assert set(CATEGORY_LABELS) == set(get_args(Category))
 
 
 async def test_create_stores_the_subscription_and_lists_it(
@@ -109,8 +134,7 @@ async def test_create_stores_the_subscription_and_lists_it(
     assert subscription.user_id == owner.id
     assert subscription.skills == ["python", "django"]
     assert subscription.skills_match == "all"
-    assert subscription.min_salary_usd == 3000
-    assert subscription.include_unsalaried is True
+    assert (subscription.min_salary_usd, subscription.include_unsalaried) == (3000, True)
     page = await client.get("/subscriptions")
     assert "Python remote" in page.text
     assert "all of Python, Django · Senior · Remote · from $3,000/month or not stated" in page.text
@@ -125,6 +149,17 @@ async def test_unticked_checkbox_means_no(
 
     [subscription] = await stored(async_session)
     assert subscription.include_unsalaried is False
+
+
+async def test_without_a_minimum_the_checkbox_is_not_stored(
+    client: AsyncClient, async_session: AsyncSession, owner: User
+) -> None:
+    form = {key: value for key, value in FORM.items() if key != "include_unsalaried"}
+
+    await post(client, "/subscriptions", form | {"min_salary_usd": ""})
+
+    [subscription] = await stored(async_session)
+    assert (subscription.min_salary_usd, subscription.include_unsalaried) == (None, None)
 
 
 async def test_invalid_form_is_shown_again_with_errors(
@@ -148,19 +183,32 @@ async def test_a_subscription_needs_a_criterion(client: AsyncClient, owner: User
     assert "Choose at least one skill" in response.text
 
 
-async def test_create_stops_at_the_limit(
+async def test_at_the_limit_the_list_and_the_new_page_say_so(
     client: AsyncClient, async_session: AsyncSession, owner: User
 ) -> None:
-    for number in range(MAX_SUBSCRIPTIONS):
-        assert (await create(client, name=f"#{number}")).status_code == 303
+    await fill_to_the_limit(async_session, owner)
 
     page = await client.get("/subscriptions")
+    new = await client.get("/subscriptions/new")
+
+    assert "reached the limit of 20 subscriptions" in page.text
+    assert 'href="/subscriptions/new"' not in page.text
+    # Before any form is filled in.
+    assert new.status_code == 200
+    assert "reached the limit of 20 subscriptions" in new.text
+    assert 'name="name"' not in new.text
+
+
+async def test_create_at_the_limit_is_refused(
+    client: AsyncClient, async_session: AsyncSession, owner: User
+) -> None:
+    await fill_to_the_limit(async_session, owner)
+
     response = await create(client, name="one too many")
 
-    assert "reached the limit of 20" in page.text
-    assert 'href="/subscriptions/new"' not in page.text
     assert response.status_code == 422
-    assert "at most 20 subscriptions" in response.text
+    assert "reached the limit of 20 subscriptions" in response.text
+    assert 'value="one too many"' in response.text
     assert len(await stored(async_session)) == MAX_SUBSCRIPTIONS
 
 
@@ -189,15 +237,14 @@ async def test_update_saves_the_changes(
     response = await post(
         client,
         f"/subscriptions/{subscription.id}",
-        {"name": "Any junior", "seniority": ["junior"], "skills_match": "any"},
+        {"name": "Any junior", "seniority": ["junior"], "skills_match": "all"},
     )
 
     assert response.status_code == 303
-    await async_session.refresh(subscription)
-    assert subscription.name == "Any junior"
-    assert subscription.skills == []
-    assert subscription.seniority == ["junior"]
-    assert subscription.min_salary_usd is None
+    [updated] = await stored(async_session)
+    assert updated.name == "Any junior"
+    assert (updated.skills, updated.skills_match, updated.seniority) == ([], "any", ["junior"])
+    assert (updated.min_salary_usd, updated.include_unsalaried) == (None, None)
 
 
 async def test_invalid_update_changes_nothing(
@@ -209,8 +256,9 @@ async def test_invalid_update_changes_nothing(
     response = await post(client, f"/subscriptions/{subscription.id}", FORM | {"name": ""})
 
     assert response.status_code == 422
-    await async_session.refresh(subscription)
-    assert subscription.name == "Python remote"
+    assert "Edit subscription" in response.text
+    [unchanged] = await stored(async_session)
+    assert unchanged.name == "Python remote"
 
 
 async def test_toggle_pauses_and_resumes(
@@ -222,24 +270,23 @@ async def test_toggle_pauses_and_resumes(
     response = await post(client, f"/subscriptions/{subscription.id}/toggle")
 
     assert response.status_code == 303
-    await async_session.refresh(subscription)
-    assert subscription.is_active is False
+    [paused] = await stored(async_session)
+    assert paused.is_active is False
     assert "Paused" in (await client.get("/subscriptions")).text
 
 
-async def test_htmx_toggle_returns_only_the_row(
+async def test_htmx_toggle_returns_the_list_without_the_page(
     client: AsyncClient, async_session: AsyncSession, owner: User
 ) -> None:
     await create(client)
     [subscription] = await stored(async_session)
 
-    response = await post(
-        client, f"/subscriptions/{subscription.id}/toggle", headers={"HX-Request": "true"}
-    )
+    response = await post(client, f"/subscriptions/{subscription.id}/toggle", headers=HTMX)
 
     assert response.status_code == 200
-    assert response.text.lstrip().startswith(f'<tr id="subscription-{subscription.id}">')
+    assert '<div id="subscriptions">' in response.text
     assert "<html" not in response.text
+    assert f'<tr id="subscription-{subscription.id}">' in response.text
     assert "Paused" in response.text
     assert "Resume" in response.text
 
@@ -250,25 +297,38 @@ async def test_delete_removes_the_subscription(
     await create(client)
     [subscription] = await stored(async_session)
 
-    plain = await post(client, f"/subscriptions/{subscription.id}/delete")
+    response = await post(client, f"/subscriptions/{subscription.id}/delete")
 
-    assert plain.status_code == 303
+    assert response.status_code == 303
     assert await stored(async_session) == []
 
 
-async def test_htmx_delete_returns_an_empty_row(
+async def test_htmx_delete_of_the_last_one_shows_the_empty_list(
     client: AsyncClient, async_session: AsyncSession, owner: User
 ) -> None:
     await create(client)
     [subscription] = await stored(async_session)
 
-    response = await post(
-        client, f"/subscriptions/{subscription.id}/delete", headers={"HX-Request": "true"}
-    )
+    response = await post(client, f"/subscriptions/{subscription.id}/delete", headers=HTMX)
 
     assert response.status_code == 200
-    assert response.text == ""
+    assert "<html" not in response.text
+    assert "You have no subscriptions yet." in response.text
+    assert "<table>" not in response.text
     assert await stored(async_session) == []
+
+
+async def test_htmx_delete_at_the_limit_offers_a_new_subscription_again(
+    client: AsyncClient, async_session: AsyncSession, owner: User
+) -> None:
+    await fill_to_the_limit(async_session, owner)
+    first = (await stored(async_session))[0]
+
+    response = await post(client, f"/subscriptions/{first.id}/delete", headers=HTMX)
+
+    assert "reached the limit" not in response.text
+    assert 'href="/subscriptions/new"' in response.text
+    assert response.text.count('<tr id="subscription-') == MAX_SUBSCRIPTIONS - 1
 
 
 @pytest.mark.parametrize(
@@ -288,8 +348,9 @@ async def test_another_accounts_subscription_is_not_found(
     method: str,
     path: str,
 ) -> None:
-    url = f"/subscriptions/{strangers.id}{path}"
-    missing_url = f"/subscriptions/{strangers.id + 1000}{path}"
+    stranger_id = strangers.id
+    url = f"/subscriptions/{stranger_id}{path}"
+    missing_url = f"/subscriptions/{stranger_id + 1000}{path}"
 
     if method == "GET":
         response, missing = await client.get(url), await client.get(missing_url)
@@ -299,8 +360,9 @@ async def test_another_accounts_subscription_is_not_found(
     # Exactly like a subscription that does not exist, so ids reveal nothing.
     assert response.status_code == missing.status_code == 404
     assert response.text == missing.text
-    await async_session.refresh(strangers)
-    assert (strangers.name, strangers.is_active) == ("Not yours", True)
+    theirs = await async_session.get(Subscription, stranger_id, populate_existing=True)
+    assert theirs is not None
+    assert (theirs.name, theirs.is_active) == ("Not yours", True)
 
 
 async def test_invalid_update_of_another_accounts_subscription_is_not_found(
@@ -328,50 +390,39 @@ async def test_writes_need_a_csrf_token(client: AsyncClient, owner: User, path: 
     assert response.status_code == 403
 
 
-async def test_skills_removed_from_the_dictionary_are_skipped_in_the_list(
+async def test_skills_removed_from_the_dictionary_are_shown_as_untracked(
     client: AsyncClient, async_session: AsyncSession, owner: User
 ) -> None:
-    async_session.add(
-        Subscription(
-            user_id=owner.id,
-            name="Legacy",
-            skills=["python", "removed-skill"],
-            skills_match="any",
-            seniority=[],
-            work_formats=[],
-        )
-    )
+    async_session.add(row(owner.id, name="Legacy", skills=["python", "removed-skill"]))
     await async_session.commit()
 
     response = await client.get("/subscriptions")
 
     assert response.status_code == 200
-    assert "<small>Python</small>" in response.text
+    assert "any of Python, removed-skill (no longer tracked)" in response.text
+
+
+NOTHING = SubscriptionFilter(
+    skills=(), skills_match="any", seniority=(), work_formats=(), salary=None
+)
 
 
 @pytest.mark.parametrize(
     ("changes", "expected"),
     [
-        ({"skills": ["python", "go"]}, ["any of Python, Go"]),
-        ({"skills": ["python", "go"], "skills_match": "all"}, ["all of Python, Go"]),
-        ({"skills": ["python"], "skills_match": "all"}, ["Python"]),
+        ({"skills": ("python", "go")}, ["any of Python, Go"]),
+        ({"skills": ("python", "go"), "skills_match": "all"}, ["all of Python, Go"]),
+        ({"skills": ("python",)}, ["Python"]),
         (
-            {"seniority": ["junior", "middle"], "work_formats": ["hybrid"]},
+            {"seniority": ("junior", "middle"), "work_formats": ("hybrid",)},
             ["Junior, Middle", "Hybrid"],
         ),
-        ({"min_salary_usd": 2500, "include_unsalaried": False}, ["from $2,500/month"]),
-        ({"min_salary_usd": 2500, "include_unsalaried": True}, ["from $2,500/month or not stated"]),
+        ({"salary": SalaryFloor(2500, include_unsalaried=False)}, ["from $2,500/month"]),
+        (
+            {"salary": SalaryFloor(2500, include_unsalaried=True)},
+            ["from $2,500/month or not stated"],
+        ),
     ],
 )
-def test_describe_lists_each_criterion(changes: dict[str, object], expected: list[str]) -> None:
-    values: dict[str, object] = {
-        "name": "x",
-        "skills": [],
-        "skills_match": "any",
-        "seniority": [],
-        "work_formats": [],
-        "min_salary_usd": None,
-        "include_unsalaried": True,
-    }
-
-    assert describe(Subscription(**(values | changes))) == expected
+def test_describe_lists_each_criterion(changes: dict[str, Any], expected: list[str]) -> None:
+    assert describe(replace(NOTHING, **changes)) == expected

@@ -28,9 +28,7 @@ def upgrade() -> None:
         sa.Column("seniority", postgresql.ARRAY(sa.Text()), nullable=False),
         sa.Column("work_formats", postgresql.ARRAY(sa.Text()), nullable=False),
         sa.Column("min_salary_usd", sa.Integer(), nullable=True),
-        sa.Column(
-            "include_unsalaried", sa.Boolean(), server_default=sa.text("true"), nullable=False
-        ),
+        sa.Column("include_unsalaried", sa.Boolean(), nullable=True),
         sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
         sa.Column(
             "created_at",
@@ -50,6 +48,14 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "skills_match IN ('any', 'all')", name=op.f("ck_subscription_skills_match")
+        ),
+        sa.CheckConstraint(
+            "skills_match = 'any' OR cardinality(skills) >= 2",
+            name=op.f("ck_subscription_skills_match_needs_skills"),
+        ),
+        sa.CheckConstraint(
+            "(min_salary_usd IS NULL) = (include_unsalaried IS NULL)",
+            name=op.f("ck_subscription_salary_complete"),
         ),
         sa.CheckConstraint(
             "work_formats <@ ARRAY['remote', 'hybrid', 'office']::text[]",

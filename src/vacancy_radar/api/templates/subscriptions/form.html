@@ -5,6 +5,7 @@
   <h1>{{ heading }}</h1>
   <form method="post" action="{{ action }}" novalidate>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if notice %}<p role="alert"><mark>{{ notice }}</mark></p>{% endif %}
     {% if errors.filter %}<p role="alert"><mark>{{ errors.filter }}</mark></p>{% endif %}
 
     <label>
@@ -33,7 +34,7 @@
           </div>
         </details>
       {% endfor %}
-      <small>A vacancy matches when it lists</small>
+      <small>With two or more skills, a vacancy matches when it lists</small>
       <label>
         <input type="radio" name="skills_match" value="any" {% if form.skills_match != "all" %}checked{% endif %}>
         any of the chosen skills
@@ -80,7 +81,7 @@
       </label>
       <label>
         <input type="checkbox" name="include_unsalaried" {% if form.include_unsalaried %}checked{% endif %}>
-        Also include vacancies that state no salary
+        With a minimum, also include vacancies that state no salary
       </label>
       <small>Most vacancies do not state a salary, so without this a minimum filters out nearly all of them.</small>
     </fieldset>
@@ -88,7 +89,7 @@
     <p><small>Leave a group empty to accept any value. Choose at least one criterion.</small></p>
     <div class="grid">
       <button type="submit">Save</button>
-      <a href="/subscriptions" role="button" class="secondary outline">Cancel</a>
+      <a href="{{ url_for('subscriptions_list').path }}" role="button" class="secondary outline">Cancel</a>
     </div>
   </form>
 </article>

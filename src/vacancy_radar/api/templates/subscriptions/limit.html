@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}New subscription · Vacancy Radar{% endblock %}
+{% block content %}
+<article>
+  <h1>New subscription</h1>
+  <p>{{ message }} Delete or edit one of them instead.</p>
+  <a href="{{ url_for('subscriptions_list').path }}" role="button" class="secondary outline">Back to subscriptions</a>
+</article>
+{% endblock %}

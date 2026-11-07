@@ -25,7 +25,7 @@
       <ul><li><a href="/"><strong>Vacancy Radar</strong></a></li></ul>
       <ul>
         {% if user %}
-          <li><a href="/subscriptions">Subscriptions</a></li>
+          <li><a href="{{ url_for('subscriptions_list').path }}">Subscriptions</a></li>
           <li>{{ user.email }}</li>
           <li>
             <form method="post" action="/logout" class="inline">

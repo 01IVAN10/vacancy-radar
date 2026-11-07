@@ -40,7 +40,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from vacancy_radar.db.base import Base
 from vacancy_radar.domain.seniority import LEVELS
-from vacancy_radar.domain.subscriptions import MAX_NAME_LENGTH
+from vacancy_radar.domain.subscriptions import MAX_NAME_LENGTH, SKILLS_MATCHES
 from vacancy_radar.domain.work_format import WORK_FORMATS
 
 
@@ -48,6 +48,12 @@ def _known_values(column: str, values: tuple[str, ...]) -> str:
     """A CHECK that an array column holds only the given values."""
     listed = ", ".join(f"'{value}'" for value in values)
     return f"{column} <@ ARRAY[{listed}]::text[]"
+
+
+def _one_of(column: str, values: tuple[str, ...]) -> str:
+    """A CHECK that a text column holds one of the given values."""
+    listed = ", ".join(f"'{value}'" for value in values)
+    return f"{column} IN ({listed})"
 
 
 class Source(Base):
@@ -224,6 +230,10 @@ class User(Base):
 class Subscription(Base):
     """One account's filter over vacancies; see `domain/subscriptions.py`.
 
+    The CHECKs keep each filter in the canonical form the domain builds:
+    `skills_match` is 'any' unless two or more skills are chosen, and
+    `include_unsalaried` is set exactly when `min_salary_usd` is.
+
     `skills` holds slugs from `domain/skills.py` but has no CHECK: the
     dictionary changes, and a removed skill must not make stored rows
     invalid. The form refuses unknown slugs instead. Levels and work formats
@@ -233,10 +243,16 @@ class Subscription(Base):
     __tablename__ = "subscription"
     __table_args__ = (
         CheckConstraint(f"char_length(name) BETWEEN 1 AND {MAX_NAME_LENGTH}", name="name_length"),
-        CheckConstraint("skills_match IN ('any', 'all')", name="skills_match"),
+        CheckConstraint(_one_of("skills_match", SKILLS_MATCHES), name="skills_match"),
+        CheckConstraint(
+            "skills_match = 'any' OR cardinality(skills) >= 2", name="skills_match_needs_skills"
+        ),
         CheckConstraint(_known_values("seniority", LEVELS), name="seniority_known"),
         CheckConstraint(_known_values("work_formats", WORK_FORMATS), name="work_formats_known"),
         CheckConstraint("min_salary_usd > 0", name="min_salary_usd_positive"),
+        CheckConstraint(
+            "(min_salary_usd IS NULL) = (include_unsalaried IS NULL)", name="salary_complete"
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -247,7 +263,7 @@ class Subscription(Base):
     seniority: Mapped[list[str]] = mapped_column(ARRAY(Text))
     work_formats: Mapped[list[str]] = mapped_column(ARRAY(Text))
     min_salary_usd: Mapped[int | None]
-    include_unsalaried: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    include_unsalaried: Mapped[bool | None]
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=true())
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

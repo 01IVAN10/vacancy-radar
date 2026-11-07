@@ -1,6 +1,8 @@
 from http.cookies import SimpleCookie
 
 import pytest
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tests.support import PASSWORD, TEST_SECRET_KEY, add_user, csrf_token, sign_in
 from vacancy_radar.api.app import create_app
 from vacancy_radar.api.auth import AFTER_SIGN_IN
-from vacancy_radar.api.deps import Sessions
+from vacancy_radar.api.deps import CurrentUser, Sessions
 from vacancy_radar.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from vacancy_radar.auth.service import EMAIL_TAKEN
 from vacancy_radar.auth.session import SESSION_COOKIE
@@ -33,9 +35,14 @@ async def post_form(client: AsyncClient, url: str, data: dict[str, str]) -> Resp
 
 
 @pytest.fixture
-def protected() -> str:
-    """A page that requires sign-in."""
-    return "/subscriptions"
+def protected(app: FastAPI) -> str:
+    """A page of the test's own that requires sign-in, so these tests depend on no feature."""
+
+    @app.get("/protected", response_class=HTMLResponse)
+    async def protected_page(user: CurrentUser) -> HTMLResponse:
+        return HTMLResponse(f"<p>Signed in as {user.email}</p>")
+
+    return "/protected"
 
 
 async def test_first_page_view_sets_the_csrf_cookie(client: AsyncClient) -> None:
@@ -187,9 +194,9 @@ async def test_protected_page_redirects_to_sign_in_and_back(
     response = await client.get(f"{protected}?page=2")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/login?next=%2Fsubscriptions%3Fpage%3D2"
+    assert response.headers["location"] == "/login?next=%2Fprotected%3Fpage%3D2"
     login = await client.get(response.headers["location"])
-    assert 'name="next" value="/subscriptions?page=2"' in login.text
+    assert 'name="next" value="/protected?page=2"' in login.text
 
 
 async def test_protected_page_tells_htmx_to_load_the_sign_in_page(
@@ -198,7 +205,7 @@ async def test_protected_page_tells_htmx_to_load_the_sign_in_page(
     response = await client.get(protected, headers={"HX-Request": "true"})
 
     assert response.status_code == 401
-    assert response.headers["HX-Redirect"] == "/login?next=%2Fsubscriptions"
+    assert response.headers["HX-Redirect"] == "/login?next=%2Fprotected"
 
 
 async def test_protected_page_serves_the_signed_in_user(
