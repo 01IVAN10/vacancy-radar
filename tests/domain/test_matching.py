@@ -1,36 +1,51 @@
+from collections.abc import Iterable
 from dataclasses import replace
-from typing import Any
 
 import pytest
 
-from vacancy_radar.domain.matching import UsdRange, VacancyFacts, matches
-from vacancy_radar.domain.subscriptions import SalaryFloor, SubscriptionFilter
-
-# A filter that sets nothing. Real ones set at least one criterion, which
-# `build_subscription` enforces; here each test sets the one it is about.
-ANYTHING = SubscriptionFilter(
-    skills=(), skills_match="any", seniority=(), work_formats=(), salary=None
-)
-# A vacancy where normalization found nothing at all.
-BLANK = VacancyFacts(skills=frozenset(), seniority=(), work_formats=(), salary_usd=None)
+from vacancy_radar.domain.matching import VacancyFacts, matches
+from vacancy_radar.domain.money import UsdRange
+from vacancy_radar.domain.seniority import Level
+from vacancy_radar.domain.subscriptions import SalaryFloor, SkillsMatch, SubscriptionFilter
+from vacancy_radar.domain.work_format import WorkFormat
 
 
-def vacancy(**changes: Any) -> VacancyFacts:
-    if "skills" in changes:
-        changes["skills"] = frozenset(changes["skills"])
-    return replace(BLANK, **changes)
+def vacancy(
+    *,
+    skills: Iterable[str] = (),
+    seniority: tuple[Level, ...] = (),
+    work_formats: tuple[WorkFormat, ...] = (),
+    salary_usd: UsdRange | None = None,
+) -> VacancyFacts:
+    """A vacancy that states only what is given: by default, normalization found nothing."""
+    return VacancyFacts(
+        skills=frozenset(skills),
+        seniority=seniority,
+        work_formats=work_formats,
+        salary_usd=salary_usd,
+    )
 
 
-def wanting(**changes: Any) -> SubscriptionFilter:
-    return replace(ANYTHING, **changes)
+def wanting(
+    *,
+    skills: tuple[str, ...] = (),
+    skills_match: SkillsMatch = "any",
+    seniority: tuple[Level, ...] = (),
+    work_formats: tuple[WorkFormat, ...] = (),
+    salary: SalaryFloor | None = None,
+) -> SubscriptionFilter:
+    """A filter that sets only what is given."""
+    return SubscriptionFilter(
+        skills=skills,
+        skills_match=skills_match,
+        seniority=seniority,
+        work_formats=work_formats,
+        salary=salary,
+    )
 
 
 def floor(min_usd: int, *, include_unsalaried: bool) -> SubscriptionFilter:
     return wanting(salary=SalaryFloor(min_usd, include_unsalaried))
-
-
-def test_a_filter_without_criteria_matches_a_blank_vacancy() -> None:
-    assert matches(ANYTHING, BLANK)
 
 
 @pytest.mark.parametrize(
@@ -47,16 +62,10 @@ def test_a_filter_without_criteria_matches_a_blank_vacancy() -> None:
         (("python", "go"), "all", set(), False),
     ],
 )
-def test_skills(wanted: tuple[str, ...], how: str, found: set[str], expected: bool) -> None:
+def test_skills(wanted: tuple[str, ...], how: SkillsMatch, found: set[str], expected: bool) -> None:
     criteria = wanting(skills=wanted, skills_match=how)
 
     assert matches(criteria, vacancy(skills=found)) is expected
-
-
-def test_a_skill_that_left_the_dictionary_matches_nothing() -> None:
-    criteria = wanting(skills=("cobol-removed",))
-
-    assert not matches(criteria, vacancy(skills={"python", "go"}))
 
 
 @pytest.mark.parametrize(
@@ -67,11 +76,9 @@ def test_a_skill_that_left_the_dictionary_matches_nothing() -> None:
         (("middle", "senior"), ("senior",), True),
         (("senior",), ("junior",), False),
         (("senior",), ("junior", "middle"), False),
-        # A title without a level is unknown, not wrong.
-        (("senior",), (), True),
     ],
 )
-def test_seniority(wanted: tuple[str, ...], found: tuple[str, ...], expected: bool) -> None:
+def test_seniority(wanted: tuple[Level, ...], found: tuple[Level, ...], expected: bool) -> None:
     assert matches(wanting(seniority=wanted), vacancy(seniority=found)) is expected
 
 
@@ -83,14 +90,15 @@ def test_seniority(wanted: tuple[str, ...], found: tuple[str, ...], expected: bo
         (("remote", "hybrid"), ("hybrid",), True),
         (("remote",), ("office",), False),
         (("remote",), ("hybrid", "office"), False),
-        # A vacancy that names no format is unknown, not wrong.
-        (("remote",), (), True),
     ],
 )
-def test_work_formats(wanted: tuple[str, ...], found: tuple[str, ...], expected: bool) -> None:
+def test_work_formats(
+    wanted: tuple[WorkFormat, ...], found: tuple[WorkFormat, ...], expected: bool
+) -> None:
     assert matches(wanting(work_formats=wanted), vacancy(work_formats=found)) is expected
 
 
+@pytest.mark.parametrize("include_unsalaried", [True, False])
 @pytest.mark.parametrize(
     ("salary", "expected"),
     [
@@ -104,28 +112,103 @@ def test_work_formats(wanted: tuple[str, ...], found: tuple[str, ...], expected:
         (UsdRange(1000, 2999), False),
     ],
 )
-def test_salary_against_a_minimum(salary: UsdRange, expected: bool) -> None:
-    for include_unsalaried in (True, False):
-        criteria = floor(3000, include_unsalaried=include_unsalaried)
-
-        assert matches(criteria, vacancy(salary_usd=salary)) is expected
-
-
-@pytest.mark.parametrize("include_unsalaried", [True, False])
-def test_without_a_dollar_figure_the_subscription_decides(include_unsalaried: bool) -> None:
-    # No salary stated, an hourly rate and a salary not converted yet all
-    # reach matching as `salary_usd=None`.
+def test_a_stated_salary_against_a_minimum(
+    salary: UsdRange, expected: bool, include_unsalaried: bool
+) -> None:
     criteria = floor(3000, include_unsalaried=include_unsalaried)
 
-    assert matches(criteria, vacancy(salary_usd=None)) is include_unsalaried
+    assert matches(criteria, vacancy(salary_usd=salary)) is expected
+
+
+# --- what the vacancy does not state ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        pytest.param(wanting(seniority=("senior",)), id="seniority"),
+        pytest.param(wanting(work_formats=("remote",)), id="work-format"),
+        pytest.param(wanting(seniority=("senior",), work_formats=("remote",)), id="both"),
+        pytest.param(floor(3000, include_unsalaried=True), id="salary-including-unsalaried"),
+        pytest.param(
+            wanting(
+                seniority=("senior",),
+                work_formats=("remote",),
+                salary=SalaryFloor(3000, include_unsalaried=True),
+            ),
+            id="all-three",
+        ),
+    ],
+)
+def test_unknown_values_alone_never_match(criteria: SubscriptionFilter) -> None:
+    # Seniority, format and salary are missing from most vacancies. If unknown
+    # counted as a match, these subscriptions would get nearly every vacancy.
+    assert not matches(criteria, vacancy())
+
+
+@pytest.mark.parametrize(
+    ("criteria", "fitting"),
+    [
+        pytest.param(
+            wanting(skills=("python",), seniority=("senior",)),
+            vacancy(skills={"python"}),
+            id="level-unknown",
+        ),
+        pytest.param(
+            wanting(seniority=("senior",), work_formats=("remote",)),
+            vacancy(seniority=("senior",)),
+            id="format-unknown",
+        ),
+        pytest.param(
+            wanting(work_formats=("remote",), salary=SalaryFloor(3000, include_unsalaried=True)),
+            vacancy(work_formats=("remote",)),
+            id="salary-unknown",
+        ),
+    ],
+)
+def test_unknown_values_do_not_rule_out_a_vacancy_another_criterion_meets(
+    criteria: SubscriptionFilter, fitting: VacancyFacts
+) -> None:
+    assert matches(criteria, fitting)
+
+
+def test_without_a_dollar_figure_excluding_unsalaried_rules_the_vacancy_out() -> None:
+    # No salary stated, an hourly rate and a salary not converted yet all
+    # reach matching as `salary_usd=None`.
+    criteria = wanting(work_formats=("remote",), salary=SalaryFloor(3000, include_unsalaried=False))
+
+    assert not matches(criteria, vacancy(work_formats=("remote",)))
+
+
+def test_a_known_mismatch_rules_out_a_vacancy_other_criteria_meet() -> None:
+    criteria = wanting(skills=("python",), seniority=("senior",), work_formats=("remote",))
+
+    assert matches(criteria, vacancy(skills={"python"}, seniority=("senior",)))
+    assert not matches(criteria, vacancy(skills={"python"}, seniority=("junior",)))
+    assert not matches(criteria, vacancy(skills={"python"}, work_formats=("office",)))
+    assert not matches(criteria, vacancy(skills={"java"}, seniority=("senior",)))
 
 
 def test_without_a_minimum_any_salary_matches() -> None:
-    assert matches(wanting(seniority=("senior",)), vacancy(salary_usd=UsdRange(None, 500)))
+    criteria = wanting(seniority=("senior",))
+
+    assert matches(criteria, vacancy(seniority=("senior",), salary_usd=UsdRange(None, 500)))
+
+
+def test_a_filter_without_criteria_matches_nothing() -> None:
+    # `build_subscription` never stores one; matching does not rely on it.
+    everything = vacancy(
+        skills={"python"},
+        seniority=("senior",),
+        work_formats=("remote",),
+        salary_usd=UsdRange(5000, None),
+    )
+
+    assert not matches(wanting(), everything)
 
 
 def test_every_criterion_must_hold() -> None:
-    criteria = SubscriptionFilter(
+    criteria = wanting(
         skills=("python", "django"),
         skills_match="all",
         seniority=("senior",),
@@ -147,22 +230,54 @@ def test_every_criterion_must_hold() -> None:
     assert not matches(criteria, replace(fitting, salary_usd=None))
 
 
-def test_unknown_fields_still_need_the_known_ones_to_hold() -> None:
-    criteria = wanting(skills=("python",), seniority=("senior",), work_formats=("remote",))
+# --- from stored rows -----------------------------------------------------------
 
-    assert matches(criteria, vacancy(skills={"python"}))
-    assert not matches(criteria, vacancy(skills={"java"}))
+
+def test_facts_from_a_stored_row() -> None:
+    facts = VacancyFacts.from_stored(
+        skills=["python", "django"],
+        seniority=["middle", "senior"],
+        work_formats=["remote"],
+        salary_usd_min=None,
+        salary_usd_max=4000,
+    )
+
+    assert facts == vacancy(
+        skills={"python", "django"},
+        seniority=("middle", "senior"),
+        work_formats=("remote",),
+        salary_usd=UsdRange(None, 4000),
+    )
+
+
+def test_facts_from_a_stored_row_without_a_dollar_figure() -> None:
+    facts = VacancyFacts.from_stored(
+        skills=[], seniority=[], work_formats=[], salary_usd_min=None, salary_usd_max=None
+    )
+
+    assert facts == vacancy()
 
 
 @pytest.mark.parametrize(
-    ("min_usd", "max_usd", "top"),
-    [(2000, 4000, 4000), (3000, None, 3000), (None, 2500, 2500), (3000, 3000, 3000)],
+    ("seniority", "work_formats", "salary_usd_min", "salary_usd_max", "error"),
+    [
+        pytest.param(["guru"], [], None, None, "guru", id="unknown-level"),
+        pytest.param([], ["moon"], None, None, "moon", id="unknown-format"),
+        pytest.param([], [], 4000, 3000, "min_usd", id="reversed-range"),
+    ],
 )
-def test_usd_range_top(min_usd: int | None, max_usd: int | None, top: int) -> None:
-    assert UsdRange(min_usd, max_usd).top == top
-
-
-@pytest.mark.parametrize(("min_usd", "max_usd"), [(None, None), (4000, 3000)])
-def test_usd_range_refuses_impossible_bounds(min_usd: int | None, max_usd: int | None) -> None:
-    with pytest.raises(ValueError, match="salary range"):
-        UsdRange(min_usd, max_usd)
+def test_facts_refuse_values_the_database_keeps_out(
+    seniority: list[str],
+    work_formats: list[str],
+    salary_usd_min: int | None,
+    salary_usd_max: int | None,
+    error: str,
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        VacancyFacts.from_stored(
+            skills=[],
+            seniority=seniority,
+            work_formats=work_formats,
+            salary_usd_min=salary_usd_min,
+            salary_usd_max=salary_usd_max,
+        )

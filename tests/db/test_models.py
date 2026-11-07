@@ -6,7 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from vacancy_radar.db.models import CollectRun, RawVacancy, Source, Subscription, User
+from vacancy_radar.db.models import (
+    CollectRun,
+    RawVacancy,
+    Source,
+    Subscription,
+    User,
+    Vacancy,
+)
 
 
 def add_source(session: Session, slug: str) -> Source:
@@ -205,3 +212,33 @@ def test_all_skills_match_with_two_skills_and_a_full_salary_floor_is_valid(
     )
 
     db_session.flush()
+
+
+def test_vacancy_dollar_range_cannot_start_above_its_end(db_session: Session) -> None:
+    source = add_source(db_session, "djinni")
+    raw = raw_vacancy(source)
+    db_session.add(raw)
+    db_session.flush()
+    db_session.add(
+        Vacancy(
+            raw_vacancy_id=raw.id,
+            source_id=source.id,
+            url=raw.url,
+            title="Python Developer",
+            cities=[],
+            salary_min=3000,
+            salary_max=4000,
+            salary_currency="USD",
+            salary_period="month",
+            salary_usd_min=4000,
+            salary_usd_max=3000,
+            seniority=[],
+            work_formats=[],
+            skills=[],
+            normalizer_version=2,
+            raw_updated_at=datetime.now(UTC),
+        )
+    )
+
+    with pytest.raises(IntegrityError, match="ck_vacancy_salary_usd_range"):
+        db_session.flush()

@@ -1,47 +1,33 @@
 """Whether a normalized vacancy matches a subscription's filter. Pure: no I/O.
 
-Every criterion the filter sets must hold, and a criterion it leaves empty
-holds for any vacancy. What the vacancy does not state is read per field:
+Each criterion the filter sets gives a verdict on the vacancy: met, failed,
+or unknown when the vacancy does not state what the criterion asks about.
+A vacancy matches when no criterion failed and at least one was met. So an
+unknown value never rules a vacancy out, but it cannot be the only reason
+to send one either, and a filter of criteria that are rarely stated does
+not match nearly every vacancy.
 
-- **Skills** are the point of a skills filter, so a vacancy where none were
-  found does not match one.
-- **Seniority and work format** are found in about a third and a half of
-  vacancies respectively (local data, 2026-11-07). A vacancy that names
-  neither is unknown, not wrong, so it matches: otherwise a subscription to
-  senior roles would never see two thirds of the market.
-- **Salary**: a vacancy matches a minimum when the top of its range reaches
-  it, since "$2,000–4,000" can pay $3,000. Without a monthly dollar figure
-  (no salary stated, an hourly rate, or one not converted yet) the
-  subscription's `include_unsalaried` decides.
-
-See `docs/subscriptions.md` for the reasoning and examples.
+`docs/subscriptions.md` (Matching) lists what each criterion reads and why.
 """
 
-from collections.abc import Collection
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from enum import Enum, auto
+from typing import Self
 
-from vacancy_radar.domain.seniority import Level
+from vacancy_radar.domain.choices import one_of
+from vacancy_radar.domain.money import UsdRange
+from vacancy_radar.domain.seniority import LEVELS, Level
 from vacancy_radar.domain.subscriptions import SalaryFloor, SubscriptionFilter
-from vacancy_radar.domain.work_format import WorkFormat
+from vacancy_radar.domain.work_format import WORK_FORMATS, WorkFormat
 
 
-@dataclass(frozen=True, slots=True)
-class UsdRange:
-    """A monthly salary in whole US dollars with at least one bound."""
+class Verdict(Enum):
+    """What one criterion says about one vacancy."""
 
-    min_usd: int | None
-    max_usd: int | None
-
-    def __post_init__(self) -> None:
-        if self.min_usd is None and self.max_usd is None:
-            raise ValueError("a salary range needs at least one bound")
-        if self.min_usd is not None and self.max_usd is not None and self.min_usd > self.max_usd:
-            raise ValueError("a salary range cannot start above its end")
-
-    @property
-    def top(self) -> int:
-        """The most the vacancy may pay: its upper bound, or its lower one if that is all."""
-        return max(bound for bound in (self.min_usd, self.max_usd) if bound is not None)
+    MET = auto()
+    UNKNOWN = auto()
+    FAILED = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,35 +40,76 @@ class VacancyFacts:
     # None when there is no monthly dollar figure to compare.
     salary_usd: UsdRange | None
 
+    @classmethod
+    def from_stored(
+        cls,
+        *,
+        skills: Iterable[str],
+        seniority: Sequence[str],
+        work_formats: Sequence[str],
+        salary_usd_min: int | None,
+        salary_usd_max: int | None,
+    ) -> Self:
+        """Rebuild the facts from the values of a stored `vacancy` row.
+
+        Raises `ValueError` for values the database constraints should have
+        kept out: an unknown level or format, or a dollar range that starts
+        above its end.
+        """
+        return cls(
+            skills=frozenset(skills),
+            seniority=tuple(one_of(level, LEVELS) for level in seniority),
+            work_formats=tuple(one_of(fmt, WORK_FORMATS) for fmt in work_formats),
+            salary_usd=UsdRange.from_stored(salary_usd_min, salary_usd_max),
+        )
+
 
 def matches(criteria: SubscriptionFilter, vacancy: VacancyFacts) -> bool:
-    """True when the vacancy meets every criterion the filter sets."""
-    return (
-        _skills_match(criteria, vacancy.skills)
-        and _known_or_overlapping(criteria.seniority, vacancy.seniority)
-        and _known_or_overlapping(criteria.work_formats, vacancy.work_formats)
-        and _salary_matches(criteria.salary, vacancy.salary_usd)
-    )
+    """True when no criterion the filter sets fails and at least one is met."""
+    verdicts = [
+        verdict
+        for verdict in (
+            _skills(criteria, vacancy.skills),
+            _overlap(criteria.seniority, vacancy.seniority),
+            _overlap(criteria.work_formats, vacancy.work_formats),
+            _salary(criteria.salary, vacancy.salary_usd),
+        )
+        if verdict is not None
+    ]
+    return Verdict.FAILED not in verdicts and Verdict.MET in verdicts
 
 
-def _skills_match(criteria: SubscriptionFilter, skills: frozenset[str]) -> bool:
+# Each check returns None when the filter does not set its criterion.
+
+
+def _skills(criteria: SubscriptionFilter, skills: frozenset[str]) -> Verdict | None:
+    """Skills are what a skills filter is about, so a vacancy without any fails it."""
     if not criteria.skills:
-        return True
+        return None
     if criteria.skills_match == "all":
-        return skills.issuperset(criteria.skills)
-    return not skills.isdisjoint(criteria.skills)
+        met = skills.issuperset(criteria.skills)
+    else:
+        met = not skills.isdisjoint(criteria.skills)
+    return Verdict.MET if met else Verdict.FAILED
 
 
-def _known_or_overlapping(wanted: Collection[str], stated: Collection[str]) -> bool:
-    """Any value if none is wanted, and an unstated value counts as unknown, not as a mismatch."""
-    if not wanted or not stated:
-        return True
-    return not set(wanted).isdisjoint(stated)
+def _overlap[T: str](wanted: tuple[T, ...], stated: tuple[T, ...]) -> Verdict | None:
+    """Met by any wanted value; a vacancy that states none is unknown."""
+    if not wanted:
+        return None
+    if not stated:
+        return Verdict.UNKNOWN
+    return Verdict.FAILED if set(wanted).isdisjoint(stated) else Verdict.MET
 
 
-def _salary_matches(floor: SalaryFloor | None, salary: UsdRange | None) -> bool:
+def _salary(floor: SalaryFloor | None, salary: UsdRange | None) -> Verdict | None:
+    """Met when the top of the range reaches the minimum.
+
+    Without a dollar figure the vacancy is unknown if the subscription
+    includes vacancies without a salary, and fails otherwise.
+    """
     if floor is None:
-        return True
+        return None
     if salary is None:
-        return floor.include_unsalaried
-    return salary.top >= floor.min_usd
+        return Verdict.UNKNOWN if floor.include_unsalaried else Verdict.FAILED
+    return Verdict.MET if salary.top >= floor.min_usd else Verdict.FAILED

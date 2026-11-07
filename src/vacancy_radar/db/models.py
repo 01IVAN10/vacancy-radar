@@ -163,6 +163,8 @@ class Vacancy(Base):
         CheckConstraint("salary_currency IN ('USD', 'EUR', 'UAH')", name="salary_currency"),
         CheckConstraint("salary_period IN ('month', 'year', 'hour')", name="salary_period"),
         CheckConstraint("salary_min <= salary_max", name="salary_range"),
+        # The dollar range is converted from the stated one, so it keeps its order.
+        CheckConstraint("salary_usd_min <= salary_usd_max", name="salary_usd_range"),
         # A salary has a currency, a period and at least one bound, or none of them.
         CheckConstraint(
             "(salary_currency IS NULL) = (salary_period IS NULL) "

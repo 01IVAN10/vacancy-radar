@@ -19,6 +19,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Self
 
+from vacancy_radar.domain.choices import one_of
 from vacancy_radar.domain.seniority import LEVELS, Level
 from vacancy_radar.domain.skills import SKILLS, SKILLS_BY_SLUG
 from vacancy_radar.domain.work_format import WORK_FORMATS, WorkFormat
@@ -86,9 +87,9 @@ class SubscriptionFilter:
             raise ValueError("a stored salary floor needs both its amount and its choice")
         return cls(
             skills=tuple(skills),
-            skills_match=_one_of(skills_match, SKILLS_MATCHES),
-            seniority=tuple(_one_of(level, LEVELS) for level in seniority),
-            work_formats=tuple(_one_of(fmt, WORK_FORMATS) for fmt in work_formats),
+            skills_match=one_of(skills_match, SKILLS_MATCHES),
+            seniority=tuple(one_of(level, LEVELS) for level in seniority),
+            work_formats=tuple(one_of(fmt, WORK_FORMATS) for fmt in work_formats),
             salary=salary,
         )
 
@@ -182,20 +183,12 @@ def build_subscription(form: SubscriptionForm) -> SubscriptionDraft:
         name=name,
         filter=SubscriptionFilter(
             skills=skills,
-            skills_match=_one_of(form.skills_match, SKILLS_MATCHES) if len(skills) > 1 else "any",
+            skills_match=one_of(form.skills_match, SKILLS_MATCHES) if len(skills) > 1 else "any",
             seniority=levels,
             work_formats=formats,
             salary=None if amount is None else SalaryFloor(amount, form.include_unsalaried),
         ),
     )
-
-
-def _one_of[T: str](value: str, allowed: tuple[T, ...]) -> T:
-    """`value` typed as one of `allowed`. Raises `ValueError` for anything else."""
-    for candidate in allowed:
-        if value == candidate:
-            return candidate
-    raise ValueError(f"{value!r} is not one of {allowed}")
 
 
 def _known[T: str](

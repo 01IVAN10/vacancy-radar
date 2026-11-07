@@ -26,7 +26,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from vacancy_radar.db.models import RawVacancy, Skill, Source, Vacancy
-from vacancy_radar.domain.money import to_monthly_usd
+from vacancy_radar.domain.money import UsdRange, to_monthly_usd
 from vacancy_radar.domain.normalize import (
     NORMALIZER_VERSION,
     NORMALIZERS,
@@ -106,11 +106,9 @@ def convert_salaries(
     converted = []
     for row in rows:
         salary = Salary(row.salary_min, row.salary_max, row.salary_currency, row.salary_period)
-        usd_min, usd_max = to_monthly_usd(
-            salary, rates.get(rate_day(row.published_at, row.first_seen_at))
-        )
-        if usd_min is not None or usd_max is not None:
-            converted.append({"id": row.id, "salary_usd_min": usd_min, "salary_usd_max": usd_max})
+        usd = to_monthly_usd(salary, rates.get(rate_day(row.published_at, row.first_seen_at)))
+        if usd is not None:
+            converted.append({"id": row.id, **usd_columns(usd)})
     if converted:
         session.execute(update(Vacancy), converted)
     session.commit()
@@ -188,6 +186,14 @@ def rate_day(published_at: datetime | None, first_seen_at: datetime) -> date:
     return kyiv_date(published_at or first_seen_at)
 
 
+def usd_columns(usd: UsdRange | None) -> dict[str, int | None]:
+    """The `salary_usd_*` column values of a monthly dollar range."""
+    return {
+        "salary_usd_min": None if usd is None else usd.min_usd,
+        "salary_usd_max": None if usd is None else usd.max_usd,
+    }
+
+
 def vacancy_values(row: Row[Any], vacancy: NormalizedVacancy) -> dict[str, Any]:
     """Column values of the `vacancy` row for one raw item.
 
@@ -195,7 +201,7 @@ def vacancy_values(row: Row[Any], vacancy: NormalizedVacancy) -> dict[str, Any]:
     others are left to `convert_salaries`.
     """
     salary = vacancy.salary
-    usd_min, usd_max = to_monthly_usd(salary, rates=None) if salary else (None, None)
+    usd = to_monthly_usd(salary, rates=None) if salary else None
     return {
         "raw_vacancy_id": row.id,
         "source_id": row.source_id,
@@ -209,8 +215,7 @@ def vacancy_values(row: Row[Any], vacancy: NormalizedVacancy) -> dict[str, Any]:
         "salary_max": salary.max_amount if salary else None,
         "salary_currency": salary.currency if salary else None,
         "salary_period": salary.period if salary else None,
-        "salary_usd_min": usd_min,
-        "salary_usd_max": usd_max,
+        **usd_columns(usd),
         "seniority": list(vacancy.seniority),
         "work_formats": list(vacancy.work_formats),
         "skills": list(vacancy.skills),
