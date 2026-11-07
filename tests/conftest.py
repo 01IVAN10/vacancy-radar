@@ -141,7 +141,7 @@ def committed_database(
         connection.execute(
             text(
                 "TRUNCATE vacancy, skill, exchange_rate, collect_run, raw_vacancy, source, "
-                "app_user RESTART IDENTITY"
+                "subscription, app_user RESTART IDENTITY"
             )
         )
 

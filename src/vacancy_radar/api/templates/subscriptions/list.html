@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Subscriptions · Vacancy Radar{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>Subscriptions</h1>
+  <p>New vacancies that match an active subscription will be sent to your Telegram.</p>
+</hgroup>
+{% include "subscriptions/_list.html" %}
+{% endblock %}

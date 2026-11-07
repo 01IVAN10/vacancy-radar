@@ -1,0 +1,25 @@
+{% set subscription = row.subscription %}
+{% set toggle_url = url_for('subscriptions_toggle', subscription_id=subscription.id).path %}
+{% set delete_url = url_for('subscriptions_delete', subscription_id=subscription.id).path %}
+<tr id="subscription-{{ subscription.id }}">
+  <td>
+    <a href="{{ url_for('subscriptions_edit', subscription_id=subscription.id).path }}">{{ subscription.name }}</a><br>
+    <small>{{ row.criteria | join(" · ") }}</small>
+  </td>
+  <td>{% if subscription.is_active %}Active{% else %}<mark>Paused</mark>{% endif %}</td>
+  <td class="actions">
+    <form method="post" action="{{ toggle_url }}" class="inline"
+          hx-post="{{ toggle_url }}" hx-target="#subscriptions" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="secondary outline">
+        {% if subscription.is_active %}Pause{% else %}Resume{% endif %}
+      </button>
+    </form>
+    <form method="post" action="{{ delete_url }}" class="inline"
+          hx-post="{{ delete_url }}" hx-target="#subscriptions" hx-swap="outerHTML"
+          hx-confirm="Delete “{{ subscription.name }}”?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="secondary outline">Delete</button>
+    </form>
+  </td>
+</tr>

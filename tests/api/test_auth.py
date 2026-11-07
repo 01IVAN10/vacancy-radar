@@ -2,12 +2,14 @@ from http.cookies import SimpleCookie
 
 import pytest
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.support import PASSWORD, TEST_SECRET_KEY, add_user, csrf_token, sign_in
 from vacancy_radar.api.app import create_app
+from vacancy_radar.api.auth import AFTER_SIGN_IN
 from vacancy_radar.api.deps import CurrentUser, Sessions
 from vacancy_radar.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from vacancy_radar.auth.service import EMAIL_TAKEN
@@ -34,11 +36,11 @@ async def post_form(client: AsyncClient, url: str, data: dict[str, str]) -> Resp
 
 @pytest.fixture
 def protected(app: FastAPI) -> str:
-    """A page that requires sign-in, until the subscription pages exist."""
+    """A page of the test's own that requires sign-in, so these tests depend on no feature."""
 
-    @app.get("/protected")
-    async def protected_page(user: CurrentUser) -> dict[str, str]:
-        return {"email": user.email}
+    @app.get("/protected", response_class=HTMLResponse)
+    async def protected_page(user: CurrentUser) -> HTMLResponse:
+        return HTMLResponse(f"<p>Signed in as {user.email}</p>")
 
     return "/protected"
 
@@ -78,7 +80,7 @@ async def test_register_signs_the_user_in(client: AsyncClient, async_session: As
     )
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == AFTER_SIGN_IN
     session_cookie = set_cookie(response, SESSION_COOKIE)[SESSION_COOKIE]
     assert session_cookie["httponly"]
     assert session_cookie["samesite"] == "lax"
@@ -183,7 +185,7 @@ async def test_signed_in_user_skips_the_sign_in_pages(
         response = await client.get(url)
 
         assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == AFTER_SIGN_IN
 
 
 async def test_protected_page_redirects_to_sign_in_and_back(
@@ -213,7 +215,8 @@ async def test_protected_page_serves_the_signed_in_user(
 
     response = await client.get(protected)
 
-    assert response.json() == {"email": "ivan@example.com"}
+    assert response.status_code == 200
+    assert "ivan@example.com" in response.text
 
 
 async def test_garbage_session_cookie_means_signed_out(client: AsyncClient, protected: str) -> None:
@@ -255,7 +258,7 @@ async def test_login_never_redirects_off_site(
         client, "/login", {"email": "ivan@example.com", "password": PASSWORD, "next": target}
     )
 
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == AFTER_SIGN_IN
 
 
 @pytest.mark.parametrize("url", ["/register", "/login", "/logout"])
@@ -398,7 +401,7 @@ async def test_sign_up_never_redirects_off_site(client: AsyncClient) -> None:
         {"email": "ivan@example.com", "password": PASSWORD, "next": "//evil.example"},
     )
 
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == AFTER_SIGN_IN
 
 
 async def test_htmx_returns_to_the_page_not_the_fragment(

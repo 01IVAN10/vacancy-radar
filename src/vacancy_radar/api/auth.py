@@ -20,6 +20,8 @@ from vacancy_radar.auth.session import clear_session_cookie, set_session_cookie
 router = APIRouter(tags=["auth"])
 
 HOME = "/"
+# Where signing in or up leads when no page asked for it, or `next` is unsafe.
+AFTER_SIGN_IN = "/subscriptions"
 LOGIN_FAILED = "Wrong email or password."
 
 NextQuery = Annotated[str, Query(alias="next")]
@@ -28,7 +30,7 @@ NextField = Annotated[str, Form(alias="next")]
 
 @router.get("/register", response_class=HTMLResponse)
 async def register_form(
-    request: Request, user: OptionalUser, next_path: NextQuery = HOME
+    request: Request, user: OptionalUser, next_path: NextQuery = AFTER_SIGN_IN
 ) -> Response:
     target = safe_next(next_path)
     if user is not None:
@@ -45,7 +47,7 @@ async def register_submit(
     config: Config,
     email: Annotated[str, Form()] = "",
     password: Annotated[str, Form()] = "",
-    next_path: NextField = HOME,
+    next_path: NextField = AFTER_SIGN_IN,
 ) -> Response:
     target = safe_next(next_path)
     try:
@@ -61,7 +63,9 @@ async def register_submit(
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request, user: OptionalUser, next_path: NextQuery = HOME) -> Response:
+async def login_form(
+    request: Request, user: OptionalUser, next_path: NextQuery = AFTER_SIGN_IN
+) -> Response:
     target = safe_next(next_path)
     if user is not None:
         return RedirectResponse(target, status.HTTP_303_SEE_OTHER)
@@ -77,7 +81,7 @@ async def login_submit(
     config: Config,
     email: Annotated[str, Form()] = "",
     password: Annotated[str, Form()] = "",
-    next_path: NextField = HOME,
+    next_path: NextField = AFTER_SIGN_IN,
 ) -> Response:
     target = safe_next(next_path)
     user = await authenticate(session, email, password)
@@ -99,7 +103,7 @@ async def logout(config: Config) -> Response:
 
 
 def safe_next(target: str) -> str:
-    """`target` if it is a path on this site, else the home page.
+    """`target` if it is a path on this site, else `AFTER_SIGN_IN`.
 
     Anything else would make the sign-in page an open redirect: a link to
     `/login?next=https://evil.example` that sends the user to another site
@@ -107,10 +111,10 @@ def safe_next(target: str) -> str:
     `//evil.example` and `/\\evil.example` are read by browsers as other hosts.
     """
     if not target.startswith("/") or target.startswith("//") or "\\" in target:
-        return HOME
+        return AFTER_SIGN_IN
     # Control characters could split the Location header or hide a host.
     if not target.isprintable():
-        return HOME
+        return AFTER_SIGN_IN
     return target
 
 

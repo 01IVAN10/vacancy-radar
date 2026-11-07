@@ -11,8 +11,8 @@ Updated 2026-11-07.
 - **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
 - **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
 - **Stage 5** is done: `raw_vacancy` is normalized into `vacancy` (salary in its currency and in monthly USD, seniority, work format, skills, DOU company and places) by `python -m vacancy_radar.normalize` and the Celery task `normalize.pending`. See `docs/normalization.md`. It runs locally only. Neon keeps accumulating raw data, and vacancies are rebuilt from it on the VPS (stage 11).
-- **Stage 6** is in progress: accounts, sign-in and CSRF are done (`feat/user-auth`); subscriptions are next (`feat/subscriptions`).
-- **Next:** finish stage 6. In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
+- **Stage 6** is done: accounts with sign-in and CSRF protection (`docs/auth.md`), and subscription pages at `/subscriptions` (`docs/subscriptions.md`).
+- **Next:** stage 7 (Telegram). In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
 
 ## Phase A: Start accumulating data
 
@@ -79,14 +79,14 @@ Decisions (2026-11-06): `collect_if_due` is shared by the CLI and the task. It a
 Fix after review (2026-11-06): benefits with an amount and a period ("insurance compensation up to $150 per month") are no longer read as a salary, `з/п` is a pay word, and "Go/No-Go", "RAG status" and "airflow sensors" are not skills. `NORMALIZER_VERSION` is 2, and a test pins it to a hash of the parser modules so a parser change cannot ship without a decision about the version. Salaries are converted to dollars in a separate step after normalization (`convert_salaries`). Normalization no longer calls NBU, so an NBU outage leaves only `salary_usd_*` NULL until the next run instead of stopping every batch.
 
 ### Stage 6: Auth and subscriptions
-- [ ] Models `user`, `subscription`
+- [x] Models `user`, `subscription`
 - [x] Registration and login (argon2, JWT in httpOnly cookie)
 - [x] CSRF protection for forms
 - [x] Base Jinja2 layout + HTMX
-- [ ] Subscription CRUD (skills, seniority, format, min salary USD)
-- [ ] Tests: auth flow, permissions, filter validation
+- [x] Subscription CRUD (skills, seniority, format, min salary USD)
+- [x] Tests: auth flow, permissions, filter validation
 
-Decisions (2026-11-07): the account table is `app_user`, because `user` is reserved in Postgres. Emails are stored lower-cased, and a CHECK enforces it. Sessions are a 7-day HS256 JWT with no server-side revocation, and CSRF uses double-submit cookies. Details are in `docs/auth.md`. Subscriptions will carry `skills_match` (`any` | `all`) and `include_unsalaried` (default true), because only about 5% of vacancies state a salary. Pages use Pico.css and HTMX from a CDN, pinned with SRI.
+Decisions (2026-11-07): the account table is `app_user`, because `user` is reserved in Postgres. Emails are stored lower-cased, and a CHECK enforces it. Sessions are a 7-day HS256 JWT with no server-side revocation, and CSRF uses double-submit cookies. Details are in `docs/auth.md`. Subscriptions carry `skills_match` (`any` | `all`) and `include_unsalaried` (default true), because only about 5% of vacancies state a salary. At least one criterion is required, an account has at most 20 subscriptions, and another account's id gives 404. Details are in `docs/subscriptions.md`. Pages use Pico.css and HTMX from a CDN, pinned with SRI.
 
 ### Stage 7: Telegram
 - [ ] Bot API client on httpx

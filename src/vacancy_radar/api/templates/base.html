@@ -12,8 +12,10 @@
           integrity="sha384-2OatzQy1H+Zd/IIrjr1TcuDGqLXeHhbooAyJY1KdQMKnr4LZ22k31GBLdYKHmVjg"
           crossorigin="anonymous" defer></script>
   <style>
-    form.inline { margin: 0; }
+    form.inline { display: inline-block; margin: 0; }
     form.inline button { margin: 0; padding: 0.25rem 0.75rem; }
+    td.actions { white-space: nowrap; text-align: right; }
+    .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
   </style>
 </head>
 {# Every HTMX request carries the CSRF token in a header; plain forms send a hidden field. #}
@@ -23,6 +25,7 @@
       <ul><li><a href="/"><strong>Vacancy Radar</strong></a></li></ul>
       <ul>
         {% if user %}
+          <li><a href="{{ url_for('subscriptions_list').path }}">Subscriptions</a></li>
           <li>{{ user.email }}</li>
           <li>
             <form method="post" action="/logout" class="inline">

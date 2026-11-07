@@ -24,6 +24,6 @@
     </label>
     <button type="submit">Create account</button>
   </form>
-  <p>Already have an account? <a href="/login{% if next != '/' %}?next={{ next | urlencode }}{% endif %}">Sign in</a></p>
+  <p>Already have an account? <a href="/login?next={{ next | urlencode }}">Sign in</a></p>
 </article>
 {% endblock %}
