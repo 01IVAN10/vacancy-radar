@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Sign up · Vacancy Radar{% endblock %}
+{% block content %}
+<article>
+  <h1>Sign up</h1>
+  <form method="post" action="/register" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      Email
+      <input type="email" name="email" value="{{ email }}" autocomplete="email" required
+             {% if errors.email %}aria-invalid="true" aria-describedby="email-error"{% endif %}>
+      {% if errors.email %}<small id="email-error">{{ errors.email }}</small>{% endif %}
+    </label>
+    <label>
+      Password
+      <input type="password" name="password" autocomplete="new-password" minlength="8" required
+             {% if errors.password %}aria-invalid="true" aria-describedby="password-error"{% endif %}>
+      {% if errors.password %}
+        <small id="password-error">{{ errors.password }}</small>
+      {% else %}
+        <small>At least 8 characters.</small>
+      {% endif %}
+    </label>
+    <button type="submit">Create account</button>
+  </form>
+  <p>Already have an account? <a href="/login">Sign in</a></p>
+</article>
+{% endblock %}

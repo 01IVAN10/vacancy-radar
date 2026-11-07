@@ -30,6 +30,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://vacancy_radar:vacancy_radar@postgres:5432/vacancy_radar
       REDIS_URL: redis://redis:6379/0
+      # A fixed key, so sessions survive restarts. Never reuse it outside this stack.
+      SECRET_KEY: local-development-only-not-a-secret-000000
       # Run the mounted source instead of the copy installed in the image.
       PYTHONPATH: /app/src
     volumes:

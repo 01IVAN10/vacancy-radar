@@ -19,6 +19,8 @@ curl http://localhost:8000/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
+The site is at http://localhost:8000, where you can sign up and sign in. Its pages need the database schema, which is applied from the host with `uv run alembic upgrade head` (see [Development](#development)). How accounts, cookies and CSRF tokens work is described in [`docs/auth.md`](docs/auth.md).
+
 To override settings, copy `.env.example` to `.env` and edit it.
 
 ## Development
@@ -28,7 +30,7 @@ Requires [uv](https://docs.astral.sh/uv/) and Docker.
 ```sh
 uv sync                          # create .venv with all dependencies
 uv run pre-commit install        # run linters on every commit
-cp .env.example .env             # settings for running on the host
+cp .env.example .env             # settings for running on the host, SECRET_KEY included
 docker compose up -d postgres redis
 uv run alembic upgrade head      # create or update the database schema
 ```
@@ -129,7 +131,8 @@ Compose sets `DISABLED_SOURCES=dou` for the worker. Until the VPS exists, DOU is
 
 ```text
 src/vacancy_radar/
-├── api/        # FastAPI app and routes
+├── api/        # FastAPI app, routes and Jinja2 templates
+├── auth/       # password hashing, session tokens, CSRF tokens, registration and sign-in
 ├── collect/    # due checks, idempotent storage, the collector CLI and the Celery task
 ├── db/         # SQLAlchemy models and sync/async engines
 ├── domain/     # pure functions: parsing, normalization, matching (no I/O)

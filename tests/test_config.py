@@ -13,6 +13,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.delenv("DISABLED_SOURCES", raising=False)
+    monkeypatch.delenv("SECRET_KEY", raising=False)
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("REDIS_URL", REDIS_URL)
     return monkeypatch
@@ -99,3 +100,26 @@ def test_disabled_sources_is_a_comma_separated_list(
     env.setenv("DISABLED_SOURCES", value)
 
     assert load().disabled_sources == expected
+
+
+def test_secret_key_is_optional_and_hidden(env: pytest.MonkeyPatch) -> None:
+    # Only the web app signs tokens; the collector and Alembic run without a key.
+    assert load().secret_key is None
+
+    env.setenv("SECRET_KEY", "s" * 40)
+    settings = load()
+
+    assert settings.secret_key is not None
+    assert settings.secret_key.get_secret_value() == "s" * 40
+    assert "s" * 40 not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    ("app_env", "secure"), [("local", False), ("test", False), ("production", True)]
+)
+def test_cookies_are_secure_in_production_only(
+    env: pytest.MonkeyPatch, app_env: str, secure: bool
+) -> None:
+    env.setenv("APP_ENV", app_env)
+
+    assert load().cookie_secure is secure

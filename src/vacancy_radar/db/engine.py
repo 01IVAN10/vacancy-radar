@@ -20,9 +20,9 @@ def make_engine(url: str, **kwargs: Any) -> Engine:
     return create_engine(url, pool_pre_ping=True, **kwargs)
 
 
-def make_async_engine(url: str) -> AsyncEngine:
+def make_async_engine(url: str, **kwargs: Any) -> AsyncEngine:
     """Create an async engine for the same database."""
-    return sa_create_async_engine(url, pool_pre_ping=True)
+    return sa_create_async_engine(url, pool_pre_ping=True, **kwargs)
 
 
 @lru_cache
@@ -33,5 +33,11 @@ def get_sessionmaker() -> sessionmaker[Session]:
 
 @lru_cache
 def get_async_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    """Process-wide async session factory, built on first use from settings."""
-    return async_sessionmaker(make_async_engine(str(get_settings().database_url)))
+    """Process-wide async session factory, built on first use from settings.
+
+    `expire_on_commit=False`: after a commit, attributes stay loaded instead of
+    being reloaded on access, which an async session cannot do implicitly.
+    """
+    return async_sessionmaker(
+        make_async_engine(str(get_settings().database_url)), expire_on_commit=False
+    )

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import PostgresDsn, RedisDsn, field_validator
+from pydantic import PostgresDsn, RedisDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     and Alembic run without Redis (the scheduled GitHub Actions collection
     does), and `create_celery()` fails at startup when it is missing.
 
+    `secret_key` signs session tokens. Like `redis_url` it is optional, so the
+    collector and Alembic run without it, and `create_app()` fails at startup
+    when it is missing or too short.
+
     `disabled_sources` is the kill switch: a comma-separated list of source
     slugs (`DISABLED_SOURCES=dou`) that are never fetched, so a source can be
     stopped without a code change.
@@ -28,6 +32,7 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     database_url: PostgresDsn
     redis_url: RedisDsn | None = None
+    secret_key: SecretStr | None = None
     # NoDecode: read the variable as plain text instead of JSON.
     disabled_sources: Annotated[frozenset[str], NoDecode] = frozenset()
 
@@ -37,6 +42,11 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return frozenset(slug.strip() for slug in value.split(",") if slug.strip())
         return value
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Send cookies over HTTPS only. Local development runs on plain HTTP."""
+        return self.app_env == "production"
 
 
 @lru_cache

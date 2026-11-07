@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from vacancy_radar.db.models import CollectRun, RawVacancy, Source
+from vacancy_radar.db.models import CollectRun, RawVacancy, Source, User
 
 
 def add_source(session: Session, slug: str) -> Source:
@@ -101,4 +101,21 @@ def test_only_a_running_collect_run_has_no_finished_at(
     )
 
     with pytest.raises(IntegrityError, match="ck_collect_run_finished"):
+        db_session.flush()
+
+
+def test_user_email_is_unique(db_session: Session) -> None:
+    db_session.add(User(email="ivan@example.com", password_hash="x"))
+    db_session.flush()
+
+    db_session.add(User(email="ivan@example.com", password_hash="y"))
+    with pytest.raises(IntegrityError, match="uq_app_user_email"):
+        db_session.flush()
+
+
+def test_user_email_must_be_lower_case(db_session: Session) -> None:
+    # Keeps the unique constraint case-insensitive even for rows written by hand.
+    db_session.add(User(email="Ivan@example.com", password_hash="x"))
+
+    with pytest.raises(IntegrityError, match="ck_app_user_email_lowercase"):
         db_session.flush()

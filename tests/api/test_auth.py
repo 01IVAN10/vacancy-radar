@@ -1,0 +1,335 @@
+from collections.abc import AsyncIterator
+from http.cookies import SimpleCookie
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tests.support import PASSWORD, TEST_SECRET_KEY, add_user, csrf_token, sign_in
+from vacancy_radar.api.app import create_app
+from vacancy_radar.api.deps import SESSION_COOKIE, CurrentUser, get_session
+from vacancy_radar.auth.csrf import CSRF_COOKIE, CSRF_HEADER
+from vacancy_radar.auth.service import EMAIL_TAKEN
+from vacancy_radar.auth.tokens import issue_token
+from vacancy_radar.config import get_settings
+from vacancy_radar.db.models import User
+
+pytestmark = pytest.mark.anyio
+
+
+def set_cookie(response: Response, name: str) -> SimpleCookie:
+    """The `Set-Cookie` header for `name`, parsed with its attributes."""
+    for header in response.headers.get_list("set-cookie"):
+        cookie = SimpleCookie(header)
+        if name in cookie:
+            return cookie
+    raise AssertionError(f"no Set-Cookie for {name}: {response.headers}")
+
+
+async def post_form(client: AsyncClient, url: str, data: dict[str, str]) -> Response:
+    return await client.post(url, data={"csrf_token": await csrf_token(client), **data})
+
+
+@pytest.fixture
+def protected(app: FastAPI) -> str:
+    """A page that requires sign-in, until the subscription pages exist."""
+
+    @app.get("/protected")
+    async def protected_page(user: CurrentUser) -> dict[str, str]:
+        return {"email": user.email}
+
+    return "/protected"
+
+
+async def test_first_page_view_sets_the_csrf_cookie(client: AsyncClient) -> None:
+    response = await client.get("/")
+
+    cookie = set_cookie(response, CSRF_COOKIE)[CSRF_COOKIE]
+    assert cookie["httponly"]
+    assert cookie["samesite"] == "lax"
+    assert not cookie["secure"]
+
+
+@pytest.mark.parametrize("url", ["/register", "/login"])
+async def test_forms_carry_the_csrf_token(client: AsyncClient, url: str) -> None:
+    token = await csrf_token(client)
+
+    response = await client.get(url)
+
+    assert response.status_code == 200
+    assert f'name="csrf_token" value="{token}"' in response.text
+    # A page with the cookie already set does not set it again.
+    assert "set-cookie" not in response.headers
+
+
+async def test_health_does_not_set_a_csrf_cookie(client: AsyncClient) -> None:
+    response = await client.get("/health")
+
+    assert "set-cookie" not in response.headers
+
+
+async def test_register_signs_the_user_in(client: AsyncClient, async_session: AsyncSession) -> None:
+    old_csrf = await csrf_token(client)
+
+    response = await post_form(
+        client, "/register", {"email": "Ivan@Example.com", "password": PASSWORD}
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    session_cookie = set_cookie(response, SESSION_COOKIE)[SESSION_COOKIE]
+    assert session_cookie["httponly"]
+    assert session_cookie["samesite"] == "lax"
+    assert not session_cookie["secure"]
+    assert int(session_cookie["max-age"]) == 7 * 24 * 3600
+    # A new session gets a new CSRF token.
+    assert client.cookies[CSRF_COOKIE] != old_csrf
+    assert await async_session.scalar(select(User.email)) == "ivan@example.com"
+    home = await client.get("/")
+    assert "You are signed in as ivan@example.com" in home.text
+
+
+async def test_register_shows_field_errors(client: AsyncClient) -> None:
+    response = await post_form(client, "/register", {"email": "ivan", "password": "short"})
+
+    assert response.status_code == 422
+    assert "Enter a valid email" in response.text
+    assert "Use at least 8 characters" in response.text
+    # The email is kept, the password is not echoed back.
+    assert 'value="ivan"' in response.text
+    assert SESSION_COOKIE not in client.cookies
+
+
+async def test_register_rejects_a_taken_email(
+    client: AsyncClient, async_session: AsyncSession, password_hash: str
+) -> None:
+    await add_user(async_session, password_hash, "ivan@example.com")
+
+    response = await post_form(
+        client, "/register", {"email": "IVAN@example.com", "password": PASSWORD}
+    )
+
+    assert response.status_code == 422
+    assert EMAIL_TAKEN in response.text
+
+
+async def test_register_escapes_what_it_echoes(client: AsyncClient) -> None:
+    response = await post_form(
+        client, "/register", {"email": '"><script>alert(1)</script>', "password": "x"}
+    )
+
+    assert "<script>alert(1)" not in response.text
+    assert "&lt;script&gt;" in response.text
+
+
+async def test_login_signs_the_user_in_and_follows_next(
+    client: AsyncClient, async_session: AsyncSession, password_hash: str
+) -> None:
+    await add_user(async_session, password_hash, "ivan@example.com")
+
+    response = await post_form(
+        client,
+        "/login",
+        {"email": "ivan@example.com", "password": PASSWORD, "next": "/protected?page=2"},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/protected?page=2"
+    assert SESSION_COOKIE in client.cookies
+
+
+@pytest.mark.parametrize(
+    ("email", "password"),
+    [("ivan@example.com", "wrong password"), ("nobody@example.com", PASSWORD)],
+)
+async def test_login_failure_does_not_tell_which_part_was_wrong(
+    client: AsyncClient,
+    async_session: AsyncSession,
+    password_hash: str,
+    email: str,
+    password: str,
+) -> None:
+    await add_user(async_session, password_hash, "ivan@example.com")
+
+    response = await post_form(client, "/login", {"email": email, "password": password})
+
+    assert response.status_code == 422
+    assert "Wrong email or password." in response.text
+    assert SESSION_COOKIE not in client.cookies
+
+
+async def test_logout_deletes_the_session_cookie(
+    client: AsyncClient, async_session: AsyncSession, password_hash: str
+) -> None:
+    sign_in(client, await add_user(async_session, password_hash))
+
+    response = await post_form(client, "/logout", {})
+
+    assert response.status_code == 303
+    cookie = set_cookie(response, SESSION_COOKIE)[SESSION_COOKIE]
+    assert cookie.value == ""
+    assert int(cookie["max-age"]) == 0
+    assert SESSION_COOKIE not in client.cookies
+
+
+async def test_signed_in_user_skips_the_sign_in_pages(
+    client: AsyncClient, async_session: AsyncSession, password_hash: str
+) -> None:
+    sign_in(client, await add_user(async_session, password_hash))
+
+    for url in ("/login?next=/protected", "/register"):
+        response = await client.get(url)
+
+        assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+async def test_protected_page_redirects_to_sign_in_and_back(
+    client: AsyncClient, protected: str
+) -> None:
+    response = await client.get(f"{protected}?page=2")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login?next=%2Fprotected%3Fpage%3D2"
+    login = await client.get(response.headers["location"])
+    assert 'name="next" value="/protected?page=2"' in login.text
+
+
+async def test_protected_page_tells_htmx_to_load_the_sign_in_page(
+    client: AsyncClient, protected: str
+) -> None:
+    response = await client.get(protected, headers={"HX-Request": "true"})
+
+    assert response.status_code == 401
+    assert response.headers["HX-Redirect"] == "/login?next=%2Fprotected"
+
+
+async def test_protected_page_serves_the_signed_in_user(
+    client: AsyncClient, async_session: AsyncSession, password_hash: str, protected: str
+) -> None:
+    sign_in(client, await add_user(async_session, password_hash, "ivan@example.com"))
+
+    response = await client.get(protected)
+
+    assert response.json() == {"email": "ivan@example.com"}
+
+
+async def test_garbage_session_cookie_means_signed_out(client: AsyncClient, protected: str) -> None:
+    client.cookies.set(SESSION_COOKIE, "garbage")
+
+    response = await client.get(protected)
+
+    assert response.status_code == 303
+
+
+async def test_session_of_a_deleted_account_means_signed_out(
+    client: AsyncClient, protected: str
+) -> None:
+    client.cookies.set(SESSION_COOKIE, issue_token(999_999, key=TEST_SECRET_KEY))
+
+    response = await client.get(protected)
+
+    assert response.status_code == 303
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://evil.example",
+        "//evil.example",
+        "/\\evil.example",
+        "javascript:alert(1)",
+        "relative/path",
+        "/\nSet-Cookie:x",
+        "",
+    ],
+)
+async def test_login_never_redirects_off_site(
+    client: AsyncClient, async_session: AsyncSession, password_hash: str, target: str
+) -> None:
+    await add_user(async_session, password_hash, "ivan@example.com")
+
+    response = await post_form(
+        client, "/login", {"email": "ivan@example.com", "password": PASSWORD, "next": target}
+    )
+
+    assert response.headers["location"] == "/"
+
+
+@pytest.mark.parametrize("url", ["/register", "/login", "/logout"])
+async def test_post_without_csrf_token_is_forbidden(client: AsyncClient, url: str) -> None:
+    await csrf_token(client)
+
+    response = await client.post(url, data={"email": "ivan@example.com", "password": PASSWORD})
+
+    assert response.status_code == 403
+    assert "The form expired" in response.text
+
+
+async def test_post_with_a_token_that_does_not_match_the_cookie_is_forbidden(
+    client: AsyncClient,
+) -> None:
+    await csrf_token(client)
+
+    response = await client.post("/logout", data={"csrf_token": "attacker-chosen"})
+
+    assert response.status_code == 403
+
+
+async def test_post_without_csrf_cookie_is_forbidden(client: AsyncClient) -> None:
+    response = await client.post("/logout", data={"csrf_token": "anything"})
+
+    assert response.status_code == 403
+
+
+async def test_csrf_header_is_accepted_for_htmx(client: AsyncClient) -> None:
+    token = await csrf_token(client)
+
+    response = await client.post("/logout", headers={CSRF_HEADER: token})
+
+    assert response.status_code == 303
+
+
+async def test_production_cookies_are_secure(
+    monkeypatch: pytest.MonkeyPatch,
+    async_session: AsyncSession,
+    password_hash: str,
+) -> None:
+    async def test_session() -> AsyncIterator[AsyncSession]:
+        yield async_session
+
+    monkeypatch.setenv("APP_ENV", "production")
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        app.dependency_overrides[get_session] = test_session
+        await add_user(async_session, password_hash, "ivan@example.com")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="https://test") as client:
+            page = await client.get("/login")
+            response = await post_form(
+                client, "/login", {"email": "ivan@example.com", "password": PASSWORD}
+            )
+    finally:
+        get_settings.cache_clear()
+
+    assert set_cookie(page, CSRF_COOKIE)[CSRF_COOKIE]["secure"]
+    assert set_cookie(response, SESSION_COOKIE)[SESSION_COOKIE]["secure"]
+    assert set_cookie(response, CSRF_COOKIE)[CSRF_COOKIE]["secure"]
+
+
+@pytest.mark.parametrize("secret_key", ["", "too-short"])
+def test_app_does_not_start_without_a_usable_secret_key(
+    monkeypatch: pytest.MonkeyPatch, secret_key: str
+) -> None:
+    from vacancy_radar.api.app import create_app
+
+    monkeypatch.setenv("SECRET_KEY", secret_key)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="SECRET_KEY"):
+            create_app()
+    finally:
+        get_settings.cache_clear()
