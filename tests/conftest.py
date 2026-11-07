@@ -1,24 +1,30 @@
 import os
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import psycopg
 import pytest
 import redis
 from alembic import command
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, NullPool, text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from tests.support import (
     DEFAULT_TEST_DATABASE_URL,
+    PASSWORD,
+    TEST_SECRET_KEY,
     alembic_config,
     redis_test_url,
     to_libpq,
     to_sqlalchemy,
 )
+from vacancy_radar.auth.passwords import hash_password
 from vacancy_radar.config import get_settings
-from vacancy_radar.db.engine import get_sessionmaker, make_engine
+from vacancy_radar.db.engine import get_sessionmaker, make_async_engine, make_engine
 
 # Modules such as `vacancy_radar.worker` read settings at import time, so the
 # test environment must be complete before any of them is imported. The
@@ -30,6 +36,7 @@ os.environ.setdefault(
     to_sqlalchemy(to_libpq(os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL))),
 )
 os.environ.setdefault("REDIS_URL", redis_test_url())
+os.environ.setdefault("SECRET_KEY", TEST_SECRET_KEY)
 
 
 @pytest.fixture
@@ -131,10 +138,62 @@ def committed_database(
     with migrated_engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE vacancy, skill, exchange_rate, collect_run, raw_vacancy, source "
-                "RESTART IDENTITY"
+                "TRUNCATE vacancy, skill, exchange_rate, collect_run, raw_vacancy, source, "
+                "app_user RESTART IDENTITY"
             )
         )
+
+
+@pytest.fixture
+async def async_session(
+    migrated_engine: Engine, test_database_url: str
+) -> AsyncIterator[AsyncSession]:
+    """Async session whose work, commits included, is rolled back after each test.
+
+    The same arrangement as `db_session`, on the async engine the web app uses.
+    `NullPool`, because a pooled connection would outlive the test's event loop.
+    """
+    engine = make_async_engine(to_sqlalchemy(test_database_url), poolclass=NullPool)
+    async with engine.connect() as connection:
+        transaction = await connection.begin()
+        session = AsyncSession(
+            bind=connection, join_transaction_mode="create_savepoint", expire_on_commit=False
+        )
+        try:
+            yield session
+        finally:
+            await session.close()
+            await transaction.rollback()
+    await engine.dispose()
+
+
+@pytest.fixture
+def app(async_session: AsyncSession) -> FastAPI:
+    """The web app with its database session replaced by `async_session`."""
+    # Imported here: the module builds an app at import time, which needs the
+    # environment set above.
+    from vacancy_radar.api.app import create_app
+    from vacancy_radar.api.deps import get_session
+
+    async def test_session() -> AsyncIterator[AsyncSession]:
+        yield async_session
+
+    application = create_app()
+    application.dependency_overrides[get_session] = test_session
+    return application
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
+    """HTTP client for `app`. It keeps cookies between requests, as a browser does."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        yield http
+
+
+@pytest.fixture(scope="session")
+def password_hash() -> str:
+    """The hash of `tests.support.PASSWORD`, computed once: Argon2 is slow on purpose."""
+    return hash_password(PASSWORD)
 
 
 @pytest.fixture

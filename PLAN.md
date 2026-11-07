@@ -6,12 +6,13 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 
 ## Current state
 
-Updated 2026-11-06.
+Updated 2026-11-07.
 
 - **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
 - **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
 - **Stage 5** is done: `raw_vacancy` is normalized into `vacancy` (salary in its currency and in monthly USD, seniority, work format, skills, DOU company and places) by `python -m vacancy_radar.normalize` and the Celery task `normalize.pending`. See `docs/normalization.md`. It runs locally only. Neon keeps accumulating raw data, and vacancies are rebuilt from it on the VPS (stage 11).
-- **Next:** stage 6 (auth and subscriptions). In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
+- **Stage 6** is in progress: accounts, sign-in and CSRF are done (`feat/user-auth`); subscriptions are next (`feat/subscriptions`).
+- **Next:** finish stage 6. In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
 
 ## Phase A: Start accumulating data
 
@@ -79,11 +80,13 @@ Fix after review (2026-11-06): benefits with an amount and a period ("insurance 
 
 ### Stage 6: Auth and subscriptions
 - [ ] Models `user`, `subscription`
-- [ ] Registration and login (argon2, JWT in httpOnly cookie)
-- [ ] CSRF protection for forms
-- [ ] Base Jinja2 layout + HTMX
+- [x] Registration and login (argon2, JWT in httpOnly cookie)
+- [x] CSRF protection for forms
+- [x] Base Jinja2 layout + HTMX
 - [ ] Subscription CRUD (skills, seniority, format, min salary USD)
 - [ ] Tests: auth flow, permissions, filter validation
+
+Decisions (2026-11-07): the account table is `app_user`, because `user` is reserved in Postgres. Emails are stored lower-cased, and a CHECK enforces it. Sessions are a 7-day HS256 JWT with no server-side revocation, and CSRF uses double-submit cookies. Details are in `docs/auth.md`. Subscriptions will carry `skills_match` (`any` | `all`) and `include_unsalaried` (default true), because only about 5% of vacancies state a salary. Pages use Pico.css and HTMX from a CDN, pinned with SRI.
 
 ### Stage 7: Telegram
 - [ ] Bot API client on httpx
@@ -122,6 +125,7 @@ Fix after review (2026-11-06): benefits with an amount and a period ("insurance 
 - [ ] GitHub Actions deploy over SSH, secrets in GH Secrets
 - [ ] Migrate data from the free Postgres (`pg_dump` → `pg_restore`), disable the cron workflow
 - [ ] Delete the cron-job.org job and revoke its token
+- [ ] Rate-limit sign-in and sign-up (Redis token bucket), CSP and HSTS in Caddy
 - [ ] Smoke check after deploy
 
 ### Stage 12: Polish
