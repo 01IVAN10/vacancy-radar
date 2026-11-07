@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Telegram · Vacancy Radar{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>Telegram</h1>
+  <p>Vacancies that match your active subscriptions are sent to the Telegram chat linked here.</p>
+</hgroup>
+
+{% if not configured %}
+  <article>
+    <p>Telegram is not set up on this site yet, so a chat cannot be linked.</p>
+  </article>
+{% else %}
+  {% if linked_at %}
+    <p>A chat is linked since <time datetime="{{ linked_at.isoformat() }}">{{ linked_at.strftime("%d %b %Y, %H:%M UTC") }}</time>.</p>
+  {% else %}
+    <p>No chat is linked yet.</p>
+  {% endif %}
+
+  {% if link %}
+    <article>
+      <p>Open the bot and press <strong>Start</strong>. The link works once, for {{ link_minutes }} minutes.</p>
+      <p>
+        <a href="{{ link }}" role="button" target="_blank" rel="noopener noreferrer">Open @{{ bot_username }}</a>
+      </p>
+      <p><small>Then reload this page to see the chat linked.</small></p>
+    </article>
+  {% else %}
+    <form method="post" action="{{ url_for('telegram_link').path }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">{% if linked_at %}Link another chat{% else %}Link Telegram{% endif %}</button>
+    </form>
+  {% endif %}
+
+  {% if linked_at %}
+    <form method="post" action="{{ url_for('telegram_unlink').path }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="secondary outline">Unlink</button>
+    </form>
+    <p><small>You can also send /stop to the bot.</small></p>
+  {% endif %}
+{% endif %}
+{% endblock %}

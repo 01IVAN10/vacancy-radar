@@ -26,6 +26,7 @@
       <ul>
         {% if user %}
           <li><a href="{{ url_for('subscriptions_list').path }}">Subscriptions</a></li>
+          <li><a href="{{ url_for('telegram_page').path }}">Telegram</a></li>
           <li>{{ user.email }}</li>
           <li>
             <form method="post" action="/logout" class="inline">

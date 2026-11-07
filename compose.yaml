@@ -56,6 +56,17 @@ services:
     healthcheck:
       disable: true
 
+  bot:
+    <<: *app
+    command: ["python", "-m", "vacancy_radar.telegram"]
+    # Without TELEGRAM_BOT_TOKEN the bot exits with 0 and stays down.
+    restart: on-failure
+    # Long polls last up to 20 s; let the current one finish on `docker compose stop`.
+    stop_grace_period: 30s
+    # The image's check calls the API's /health, which this service does not serve.
+    healthcheck:
+      disable: true
+
   postgres:
     image: postgres:16
     environment:

@@ -1,13 +1,17 @@
 """Application settings loaded from environment variables and `.env`."""
 
+import re
 from functools import lru_cache
 from typing import Annotated, Final, Literal
 
-from pydantic import PostgresDsn, RedisDsn, SecretStr, field_validator
+from pydantic import AnyHttpUrl, PostgresDsn, RedisDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # HS256 keys shorter than its 256-bit output weaken the signature.
 MIN_SECRET_KEY_LENGTH: Final = 32
+
+# Telegram bot usernames: 5 to 32 letters, digits and underscores, ending in "bot".
+BOT_USERNAME: Final = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]", re.ASCII)
 
 
 class Settings(BaseSettings):
@@ -28,6 +32,12 @@ class Settings(BaseSettings):
     `disabled_sources` is the kill switch: a comma-separated list of source
     slugs (`DISABLED_SOURCES=dou`) that are never fetched, so a source can be
     stopped without a code change.
+
+    `telegram_bot_token` lets the bot process and the worker call the Bot
+    API; without it the bot does not start. `telegram_bot_username` is all
+    the web app needs, to build the deep link that links an account; without
+    it the Telegram page says linking is not set up. `public_base_url` is
+    where the site is reached, for links in the bot's replies.
     """
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -39,6 +49,9 @@ class Settings(BaseSettings):
     secret_key: SecretStr | None = None
     # NoDecode: read the variable as plain text instead of JSON.
     disabled_sources: Annotated[frozenset[str], NoDecode] = frozenset()
+    telegram_bot_token: SecretStr | None = None
+    telegram_bot_username: str | None = None
+    public_base_url: AnyHttpUrl = AnyHttpUrl("http://localhost:8000")
 
     @field_validator("disabled_sources", mode="before")
     @classmethod
@@ -46,6 +59,32 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return frozenset(slug.strip() for slug in value.split(",") if slug.strip())
         return value
+
+    @field_validator("telegram_bot_token", mode="before")
+    @classmethod
+    def empty_token_is_none(cls, value: object) -> object:
+        """`TELEGRAM_BOT_TOKEN=` as copied from `.env.example` means no bot, not an empty token."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("telegram_bot_username", mode="before")
+    @classmethod
+    def check_bot_username(cls, value: object) -> object:
+        """Accept the name with or without the leading `@` BotFather shows."""
+        if not isinstance(value, str):
+            return value
+        name = value.strip().removeprefix("@")
+        if not name:
+            return None
+        if not BOT_USERNAME.fullmatch(name):
+            raise ValueError("a bot username has 5 to 32 letters, digits or _ and ends in 'bot'")
+        return name
+
+    @property
+    def site_url(self) -> str:
+        """`public_base_url` without a trailing slash, ready to append a path to."""
+        return str(self.public_base_url).rstrip("/")
 
     @property
     def cookie_secure(self) -> bool:

@@ -18,3 +18,19 @@ Items were picked to cover cases the parsers must handle, not at random.
 | `nbu/usd_20261030_20261107.json`, `nbu/eur_20261030_20261107.json` | `https://bank.gov.ua/NBU_Exchange/exchange_site?start=20261030&end=20261107&valcode=<usd/eur>&sort=exchangedate&order=asc&json` | 2026-11-06 | all 9 | Official NBU rates, not trimmed: public reference data. They cover a weekend (rates repeat), a working-day change, and 2026-11-05, the day used in conversion tests. |
 
 The DOU fixture was fetched with one request, within the conditions of DOU's written consent (`docs/sources.md`).
+
+## Telegram
+
+`telegram/*.json` are Bot API responses written by hand after the shapes in the [Bot API reference](https://core.telegram.org/bots/api) and the error texts Telegram returns, not recorded: recording needs a real bot and chat, and would put real chat ids into a public repository. All ids are made up.
+
+| File | Method | Covers |
+|---|---|---|
+| `get_me.json` | `getMe` | The bot's username |
+| `get_updates.json` | `getUpdates` | `/start TOKEN` in a private chat; a sticker without text; `/start` in a supergroup; an `edited_message`, which the bot does not handle |
+| `get_updates_empty.json` | `getUpdates` | A long poll that ended without updates |
+| `send_message.json` | `sendMessage` | A sent message and its `message_id` |
+| `too_many_requests.json` | any | 429 with `parameters.retry_after` |
+| `bot_blocked.json` | `sendMessage` | 403: the user blocked the bot |
+| `chat_not_found.json` | `sendMessage` | 400: the chat does not exist |
+| `conflict.json` | `getUpdates` | 409: another process is polling |
+| `unauthorized.json` | any | 401: a wrong token |

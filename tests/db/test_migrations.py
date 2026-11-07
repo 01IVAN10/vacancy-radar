@@ -31,6 +31,7 @@ def test_downgrade_and_upgrade_round_trip(migrated_engine: Engine, test_database
         "exchange_rate",
         "app_user",
         "subscription",
+        "telegram_link_token",
     } <= set(inspect(migrated_engine).get_table_names())
 
 

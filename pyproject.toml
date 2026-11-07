@@ -70,8 +70,9 @@ known-first-party = ["vacancy_radar", "tests"]
 "src/vacancy_radar/domain/**" = ["RUF001", "RUF002", "RUF003"]
 "tests/**" = [
     "S101",   # assert is how pytest works
-    "S105",   # test accounts have fixed passwords and keys on purpose
+    "S105",   # test accounts have fixed passwords, keys and tokens on purpose
     "S106",
+    "S107",
     "RUF001", # see domain/ above
     "RUF002",
     "RUF003",

@@ -29,6 +29,7 @@ from vacancy_radar.subscriptions.service import (
     SavedSubscription,
     SubscriptionLimitError,
 )
+from vacancy_radar.telegram import linking
 
 # Router-level, so no route can be added without it. It runs before each
 # route's own dependencies: a signed-out POST goes to sign-in, not to 403.
@@ -89,6 +90,7 @@ Submitted = Annotated[SubscriptionForm, Depends(submitted_form)]
 @router.get("", response_class=HTMLResponse, name="subscriptions_list")
 async def list_page(request: Request, session: DbSession, user: CurrentUser) -> HTMLResponse:
     context = await _list_context(session, user.id)
+    context["telegram_linked"] = await linking.linked_at(session, user.id) is not None
     return templates.TemplateResponse(request, "subscriptions/list.html", context)
 
 

@@ -12,14 +12,14 @@ Requires Docker with Compose v2.
 docker compose up --build
 ```
 
-This starts the API, a Celery worker, Celery Beat, PostgreSQL 16 and Redis. Then check:
+This starts the API, a Celery worker, Celery Beat, the Telegram bot, PostgreSQL 16 and Redis. The bot needs a token from @BotFather in `.env` and exits without one (see [`docs/telegram.md`](docs/telegram.md)). Then check:
 
 ```sh
 curl http://localhost:8000/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-The site is at http://localhost:8000, where you can sign up and sign in. Its pages need the database schema, which is applied from the host with `uv run alembic upgrade head` (see [Development](#development)). How accounts, cookies and CSRF tokens work is described in [`docs/auth.md`](docs/auth.md), and subscriptions in [`docs/subscriptions.md`](docs/subscriptions.md).
+The site is at http://localhost:8000, where you can sign up and sign in. Its pages need the database schema, which is applied from the host with `uv run alembic upgrade head` (see [Development](#development)). How accounts, cookies and CSRF tokens work is described in [`docs/auth.md`](docs/auth.md), subscriptions in [`docs/subscriptions.md`](docs/subscriptions.md), and linking Telegram in [`docs/telegram.md`](docs/telegram.md).
 
 To override settings, copy `.env.example` to `.env` and edit it.
 
@@ -140,6 +140,7 @@ src/vacancy_radar/
 ├── normalize/  # raw_vacancy → vacancy: the reprocessing CLI and the Celery task
 ├── sources/    # one adapter per source (fetch + parse), behind SourceAdapter
 ├── subscriptions/  # storing each account's subscriptions, scoped to the owner
+├── telegram/   # Bot API client, one-time link tokens, and the long-polling bot
 ├── config.py   # settings from environment / .env
 ├── log.py      # structlog setup
 └── worker.py   # Celery app for the worker and Beat

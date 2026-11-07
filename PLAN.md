@@ -89,8 +89,8 @@ Fix after review (2026-11-06): benefits with an amount and a period ("insurance 
 Decisions (2026-11-07): the account table is `app_user`, because `user` is reserved in Postgres. Emails are stored lower-cased, and a CHECK enforces it. Sessions are a 7-day HS256 JWT with no server-side revocation, and CSRF uses double-submit cookies. Details are in `docs/auth.md`. Subscriptions carry `skills_match` (`any` | `all`) and `include_unsalaried` (default true), because only about 5% of vacancies state a salary. At least one criterion is required, an account has at most 20 subscriptions, and another account's id gives 404. Details are in `docs/subscriptions.md`. Pages use Pico.css and HTMX from a CDN, pinned with SRI.
 
 ### Stage 7: Telegram
-- [ ] Bot API client on httpx
-- [ ] Deep-link account linking with a one-time token
+- [x] Bot API client on httpx
+- [x] Deep-link account linking with a one-time token
 - [x] Subscription matching in `domain/`
 - [ ] Model `notification` with unique `(subscription_id, cluster_id)`
 - [ ] Send task with Telegram 429 handling
