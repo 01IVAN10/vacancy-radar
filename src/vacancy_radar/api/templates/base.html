@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Vacancy Radar{% endblock %}</title>
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css"
+        integrity="sha384-L1dWfspMTHU/ApYnFiMz2QID/PlP1xCW9visvBdbEkOLkSSWsP6ZJWhPw6apiXxU"
+        crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js"
+          integrity="sha384-2OatzQy1H+Zd/IIrjr1TcuDGqLXeHhbooAyJY1KdQMKnr4LZ22k31GBLdYKHmVjg"
+          crossorigin="anonymous" defer></script>
+  <style>
+    form.inline { margin: 0; }
+    form.inline button { margin: 0; padding: 0.25rem 0.75rem; }
+  </style>
+</head>
+{# Every HTMX request carries the CSRF token in a header; plain forms send a hidden field. #}
+<body hx-headers='{{ {"X-CSRF-Token": csrf_token} | tojson }}'>
+  <header class="container">
+    <nav>
+      <ul><li><a href="/"><strong>Vacancy Radar</strong></a></li></ul>
+      <ul>
+        {% if user %}
+          <li>{{ user.email }}</li>
+          <li>
+            <form method="post" action="/logout" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="secondary outline">Sign out</button>
+            </form>
+          </li>
+        {% else %}
+          <li><a href="/login">Sign in</a></li>
+          <li><a href="/register" role="button">Sign up</a></li>
+        {% endif %}
+      </ul>
+    </nav>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

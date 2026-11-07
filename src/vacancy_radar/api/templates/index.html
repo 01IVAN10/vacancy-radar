@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<hgroup>
+  <h1>Vacancy Radar</h1>
+  <p>IT vacancies from Ukrainian job boards, matched to your subscriptions and sent to Telegram.</p>
+</hgroup>
+{% if user %}
+  <p>You are signed in as {{ user.email }}.</p>
+{% else %}
+  <p><a href="/register" role="button">Create an account</a> <a href="/login">or sign in</a></p>
+{% endif %}
+{% endblock %}

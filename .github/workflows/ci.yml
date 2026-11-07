@@ -74,6 +74,7 @@ jobs:
           docker run --detach --name api \
             --env DATABASE_URL=postgresql+psycopg://u:p@localhost:5432/db \
             --env REDIS_URL=redis://localhost:6379/0 \
+            --env SECRET_KEY=ci-smoke-test-only-not-a-secret-000000 \
             --publish 8000:8000 vacancy-radar:ci
           for _ in $(seq 1 20); do
             curl --fail --silent http://localhost:8000/health && exit 0

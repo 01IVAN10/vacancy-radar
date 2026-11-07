@@ -1,4 +1,4 @@
-"""Tables for collected data.
+"""Tables for collected data and for the people who subscribe to it.
 
 `raw_vacancy` keeps every fetched item exactly as the source returned it, so
 the normalized tables of later stages can be rebuilt from it at any time.
@@ -9,6 +9,10 @@ official NBU rates that salaries are converted with.
 `vacancy` is derived: one row per `raw_vacancy`, rebuilt by the reprocessing
 task whenever the raw item or the parsers change. `skill` mirrors the skill
 dictionary in `domain/skills.py`, so SQL can show skill names.
+
+`app_user` holds accounts. It is not called `user` because that is a
+reserved word in Postgres: an unquoted `SELECT * FROM user` returns the
+name of the current database role instead of failing.
 """
 
 from datetime import date, datetime
@@ -193,3 +197,21 @@ class Skill(Base):
     slug: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(16))
+
+
+class User(Base):
+    """An account that signs in with an email and a password.
+
+    Emails are stored in lower case, and a CHECK keeps it that way, so the
+    unique constraint is case-insensitive without `citext` or an expression
+    index.
+    """
+
+    __tablename__ = "app_user"
+    __table_args__ = (CheckConstraint("email = lower(email)", name="email_lowercase"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    email: Mapped[str] = mapped_column(Text, unique=True)
+    # Argon2 in PHC string format, parameters included, as pwdlib writes it.
+    password_hash: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
