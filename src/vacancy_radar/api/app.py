@@ -3,29 +3,40 @@
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from vacancy_radar import __version__
 from vacancy_radar.api import auth, health, pages
-from vacancy_radar.api.deps import LoginRequiredError
+from vacancy_radar.api.deps import LoginRequiredError, Sessions, WebConfig
+from vacancy_radar.api.middleware import CurrentUserMiddleware
 from vacancy_radar.api.templating import templates
 from vacancy_radar.auth.csrf import CSRFCookieMiddleware
-from vacancy_radar.auth.tokens import signing_key
-from vacancy_radar.config import get_settings
+from vacancy_radar.config import Settings, get_settings
+from vacancy_radar.db.engine import get_async_sessionmaker
 
 
-def create_app() -> FastAPI:
+def create_app(settings: Settings | None = None, sessions: Sessions | None = None) -> FastAPI:
     """Build a new application instance with all routers attached.
 
-    Fails at once when `SECRET_KEY` is missing or too short, so a bad
-    deployment does not start and serve pages nobody can sign in to.
+    `settings` and `sessions` default to the process-wide ones; tests pass
+    their own. Fails at once without `SECRET_KEY`, so a bad deployment does
+    not start and serve pages nobody can sign in to.
     """
-    settings = get_settings()
-    signing_key(settings)
+    settings = settings or get_settings()
+    if settings.secret_key is None:
+        raise RuntimeError("SECRET_KEY is required for the web app")
+    config = WebConfig(
+        secret_key=settings.secret_key.get_secret_value(),
+        cookie_secure=settings.cookie_secure,
+        sessions=sessions or get_async_sessionmaker(),
+    )
 
     app = FastAPI(title="Vacancy Radar", version=__version__)
-    app.add_middleware(CSRFCookieMiddleware, secure=settings.cookie_secure)
+    app.state.config = config
+    app.add_middleware(CurrentUserMiddleware, config=config)
+    app.add_middleware(CSRFCookieMiddleware, secure=config.cookie_secure)
     app.add_exception_handler(LoginRequiredError, _redirect_to_login)  # type: ignore[arg-type]
     app.add_exception_handler(StarletteHTTPException, _error_page)  # type: ignore[arg-type]
     app.include_router(health.router)
@@ -46,7 +57,10 @@ async def _redirect_to_login(request: Request, exc: LoginRequiredError) -> Respo
     return RedirectResponse(target, status.HTTP_303_SEE_OTHER)
 
 
-async def _error_page(request: Request, exc: StarletteHTTPException) -> HTMLResponse:
+async def _error_page(request: Request, exc: StarletteHTTPException) -> Response:
+    """An HTML error page for browsers, FastAPI's JSON error for everyone else."""
+    if "text/html" not in request.headers.get("accept", ""):
+        return await http_exception_handler(request, exc)
     return templates.TemplateResponse(
         request,
         "error.html",

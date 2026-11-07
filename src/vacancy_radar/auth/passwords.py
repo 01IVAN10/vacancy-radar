@@ -29,7 +29,9 @@ def verify_unknown_account(password: str) -> None:
     """Spend the time of a real check when no account has the given email.
 
     Without this, signing in with an unknown email would answer faster than
-    with a wrong password, which tells an attacker which emails have accounts.
+    with a wrong password. Sign-up already tells whether an email has an
+    account (see `docs/auth.md`), so this only keeps sign-in from becoming a
+    second, quieter way to ask, and it stays right once sign-up stops telling.
     """
     _hasher.verify(password, _dummy_hash())
 

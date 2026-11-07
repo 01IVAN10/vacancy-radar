@@ -2,7 +2,8 @@
 
 Forms post back to the same URL. Success redirects with 303 (post, redirect,
 get), so reloading the next page never resubmits the form. A form with
-errors is rendered again with status 422.
+errors is rendered again with status 422. Both forms carry `next`, the page
+to return to, so it survives a detour from sign-in to sign-up.
 """
 
 from typing import Annotated
@@ -10,55 +11,62 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Form, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from vacancy_radar.api.deps import SESSION_COOKIE, DbSession, OptionalUser
+from vacancy_radar.api.deps import Config, DbSession, OptionalUser, WebConfig
 from vacancy_radar.api.templating import templates
 from vacancy_radar.auth.csrf import new_csrf_token, set_csrf_cookie, verify_csrf
 from vacancy_radar.auth.service import RegistrationError, authenticate, register
-from vacancy_radar.auth.tokens import TOKEN_TTL, issue_token, signing_key
-from vacancy_radar.config import get_settings
+from vacancy_radar.auth.session import clear_session_cookie, set_session_cookie
 
 router = APIRouter(tags=["auth"])
 
 HOME = "/"
 LOGIN_FAILED = "Wrong email or password."
 
+NextQuery = Annotated[str, Query(alias="next")]
+NextField = Annotated[str, Form(alias="next")]
+
 
 @router.get("/register", response_class=HTMLResponse)
-async def register_form(request: Request, user: OptionalUser) -> Response:
+async def register_form(
+    request: Request, user: OptionalUser, next_path: NextQuery = HOME
+) -> Response:
+    target = safe_next(next_path)
     if user is not None:
-        return RedirectResponse(HOME, status.HTTP_303_SEE_OTHER)
-    return templates.TemplateResponse(request, "auth/register.html", {"email": "", "errors": {}})
+        return RedirectResponse(target, status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(
+        request, "auth/register.html", {"email": "", "errors": {}, "next": target}
+    )
 
 
 @router.post("/register", dependencies=[Depends(verify_csrf)], response_class=HTMLResponse)
 async def register_submit(
     request: Request,
     session: DbSession,
+    config: Config,
     email: Annotated[str, Form()] = "",
     password: Annotated[str, Form()] = "",
+    next_path: NextField = HOME,
 ) -> Response:
+    target = safe_next(next_path)
     try:
         user = await register(session, email, password)
     except RegistrationError as exc:
         return templates.TemplateResponse(
             request,
             "auth/register.html",
-            {"email": email, "errors": exc.errors},
+            {"email": email, "errors": exc.errors, "next": target},
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
-    return _signed_in(user.id, HOME)
+    return _signed_in(config, user.id, target)
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_form(
-    request: Request,
-    user: OptionalUser,
-    next_path: Annotated[str, Query(alias="next")] = HOME,
-) -> Response:
+async def login_form(request: Request, user: OptionalUser, next_path: NextQuery = HOME) -> Response:
+    target = safe_next(next_path)
     if user is not None:
-        return RedirectResponse(safe_next(next_path), status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(target, status.HTTP_303_SEE_OTHER)
     return templates.TemplateResponse(
-        request, "auth/login.html", {"email": "", "error": None, "next": safe_next(next_path)}
+        request, "auth/login.html", {"email": "", "error": None, "next": target}
     )
 
 
@@ -66,31 +74,27 @@ async def login_form(
 async def login_submit(
     request: Request,
     session: DbSession,
+    config: Config,
     email: Annotated[str, Form()] = "",
     password: Annotated[str, Form()] = "",
-    next_path: Annotated[str, Form(alias="next")] = HOME,
+    next_path: NextField = HOME,
 ) -> Response:
+    target = safe_next(next_path)
     user = await authenticate(session, email, password)
     if user is None:
         return templates.TemplateResponse(
             request,
             "auth/login.html",
-            {"email": email, "error": LOGIN_FAILED, "next": safe_next(next_path)},
+            {"email": email, "error": LOGIN_FAILED, "next": target},
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
-    return _signed_in(user.id, safe_next(next_path))
+    return _signed_in(config, user.id, target)
 
 
 @router.post("/logout", dependencies=[Depends(verify_csrf)])
-async def logout() -> Response:
+async def logout(config: Config) -> Response:
     response = RedirectResponse(HOME, status.HTTP_303_SEE_OTHER)
-    response.delete_cookie(
-        SESSION_COOKIE,
-        path="/",
-        httponly=True,
-        samesite="lax",
-        secure=get_settings().cookie_secure,
-    )
+    clear_session_cookie(response, secure=config.cookie_secure)
     return response
 
 
@@ -110,18 +114,9 @@ def safe_next(target: str) -> str:
     return target
 
 
-def _signed_in(user_id: int, target: str) -> Response:
+def _signed_in(config: WebConfig, user_id: int, target: str) -> Response:
     """Redirect with a new session cookie, and a new CSRF token for the new session."""
-    settings = get_settings()
     response = RedirectResponse(target, status.HTTP_303_SEE_OTHER)
-    response.set_cookie(
-        SESSION_COOKIE,
-        issue_token(user_id, key=signing_key(settings)),
-        max_age=int(TOKEN_TTL.total_seconds()),
-        httponly=True,
-        samesite="lax",
-        secure=settings.cookie_secure,
-        path="/",
-    )
-    set_csrf_cookie(response, new_csrf_token(), secure=settings.cookie_secure)
+    set_session_cookie(response, user_id, key=config.secret_key, secure=config.cookie_secure)
+    set_csrf_cookie(response, new_csrf_token(), secure=config.cookie_secure)
     return response

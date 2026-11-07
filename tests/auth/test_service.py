@@ -7,6 +7,7 @@ from tests.support import PASSWORD, add_user
 from vacancy_radar.auth.passwords import verify_password
 from vacancy_radar.auth.service import EMAIL_TAKEN, RegistrationError, authenticate, register
 from vacancy_radar.db.models import User
+from vacancy_radar.domain.accounts import INVALID_EMAIL
 
 pytestmark = pytest.mark.anyio
 
@@ -37,7 +38,7 @@ async def test_register_rejects_a_taken_email_in_any_case(
         await register(async_session, "IVAN@example.com", PASSWORD)
 
     assert caught.value.errors == {"email": EMAIL_TAKEN}
-    # The failed insert rolled back only its savepoint; the session is still usable.
+    # The failed commit was rolled back, and the session is still usable.
     assert await async_session.scalar(select(func.count()).select_from(User)) == 1
 
 
@@ -74,3 +75,25 @@ async def test_authenticate_replaces_an_outdated_hash(async_session: AsyncSessio
     await async_session.refresh(user)
     assert user.password_hash != old_hash
     assert verify_password(PASSWORD, user.password_hash) == (True, None)
+
+
+def test_registration_error_names_its_fields() -> None:
+    error = RegistrationError({"email": EMAIL_TAKEN})
+
+    assert str(error) == f"email: {EMAIL_TAKEN}"
+    with pytest.raises(ValueError, match="at least one field error"):
+        RegistrationError({})
+
+
+async def test_register_refuses_an_email_postgres_would_lower_case_further(
+    async_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stands in for letters such as U+A7CB, which Python 3.12 leaves alone and
+    # Postgres lower-cases, without depending on the server's glibc version.
+    monkeypatch.setattr("vacancy_radar.auth.service.normalize_email", str.strip)
+
+    with pytest.raises(RegistrationError) as caught:
+        await register(async_session, "Ivan@example.com", PASSWORD)
+
+    assert caught.value.errors == {"email": INVALID_EMAIL}
+    assert await async_session.scalar(select(func.count()).select_from(User)) == 0

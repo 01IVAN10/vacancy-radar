@@ -1,5 +1,6 @@
 import os
 from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 
 import psycopg
 import pytest
@@ -22,6 +23,7 @@ from tests.support import (
     to_libpq,
     to_sqlalchemy,
 )
+from vacancy_radar.api.deps import Sessions
 from vacancy_radar.auth.passwords import hash_password
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.engine import get_sessionmaker, make_async_engine, make_engine
@@ -168,19 +170,24 @@ async def async_session(
 
 
 @pytest.fixture
-def app(async_session: AsyncSession) -> FastAPI:
-    """The web app with its database session replaced by `async_session`."""
+def test_sessions(async_session: AsyncSession) -> "Sessions":
+    """A session factory for the web app that hands out `async_session` every time."""
+
+    @asynccontextmanager
+    async def shared_session() -> AsyncIterator[AsyncSession]:
+        yield async_session  # left open: the fixture rolls it back after the test
+
+    return shared_session
+
+
+@pytest.fixture
+def app(test_sessions: "Sessions") -> FastAPI:
+    """The web app on the test's session, so requests see the test's rows."""
     # Imported here: the module builds an app at import time, which needs the
     # environment set above.
     from vacancy_radar.api.app import create_app
-    from vacancy_radar.api.deps import get_session
 
-    async def test_session() -> AsyncIterator[AsyncSession]:
-        yield async_session
-
-    application = create_app()
-    application.dependency_overrides[get_session] = test_session
-    return application
+    return create_app(sessions=test_sessions)
 
 
 @pytest.fixture

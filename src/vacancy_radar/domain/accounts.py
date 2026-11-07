@@ -13,6 +13,8 @@ MAX_EMAIL_LENGTH: Final = 254  # RFC 5321 limit for a forward path
 MIN_PASSWORD_LENGTH: Final = 8
 MAX_PASSWORD_LENGTH: Final = 128
 
+INVALID_EMAIL: Final = "Enter a valid email, such as name@example.com."
+
 
 def normalize_email(raw: str) -> str:
     """The form in which an email is stored and looked up.
@@ -32,10 +34,10 @@ def email_error(email: str) -> str | None:
         return f"An email can be at most {MAX_EMAIL_LENGTH} characters."
     local, at, domain = email.rpartition("@")
     if not at or not local or any(char.isspace() for char in email):
-        return "Enter a valid email, such as name@example.com."
+        return INVALID_EMAIL
     labels = domain.split(".")
     if len(labels) < 2 or not all(labels):
-        return "Enter a valid email, such as name@example.com."
+        return INVALID_EMAIL
     return None
 
 

@@ -2,21 +2,9 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
-from pydantic import SecretStr
 
 from tests.support import TEST_SECRET_KEY
-from vacancy_radar.auth.tokens import TOKEN_TTL, issue_token, read_token, signing_key
-from vacancy_radar.config import Settings
-
-DATABASE_URL = "postgresql+psycopg://user:secret@db.example:5432/vacancy_radar"
-
-
-def settings(secret_key: str | None) -> Settings:
-    return Settings(
-        _env_file=None,
-        database_url=DATABASE_URL,  # type: ignore[arg-type]
-        secret_key=None if secret_key is None else SecretStr(secret_key),
-    )
+from vacancy_radar.auth.tokens import TOKEN_TTL, issue_token, read_token
 
 
 def test_token_round_trip() -> None:
@@ -74,11 +62,3 @@ def test_token_without_a_valid_subject_or_times_is_rejected(claims: dict[str, ob
 @pytest.mark.parametrize("token", ["", "garbage", "a.b.c"])
 def test_garbage_is_rejected(token: str) -> None:
     assert read_token(token, key=TEST_SECRET_KEY) is None
-
-
-def test_signing_key_requires_a_long_enough_secret() -> None:
-    assert signing_key(settings(TEST_SECRET_KEY)) == TEST_SECRET_KEY
-    with pytest.raises(RuntimeError, match="SECRET_KEY is required"):
-        signing_key(settings(None))
-    with pytest.raises(RuntimeError, match="at least 32"):
-        signing_key(settings("x" * 31))

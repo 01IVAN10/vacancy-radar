@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vacancy_radar.auth.csrf import CSRF_COOKIE
+from vacancy_radar.auth.session import SESSION_COOKIE
 from vacancy_radar.auth.tokens import issue_token
 from vacancy_radar.db.models import User
 
@@ -58,21 +59,29 @@ def fixture_bytes(relative_path: str) -> bytes:
 async def add_user(
     session: AsyncSession, password_hash: str, email: str = "ivan@example.com"
 ) -> User:
-    """An account whose password is `PASSWORD`, without paying for an Argon2 hash."""
+    """A committed account whose password is `PASSWORD`, without paying for an Argon2 hash.
+
+    In the test session a commit only releases a savepoint, so the account is
+    still rolled back after the test.
+    """
     user = User(email=email, password_hash=password_hash)
     session.add(user)
-    await session.flush()
+    await session.commit()
     return user
 
 
 def sign_in(client: AsyncClient, user: User) -> None:
-    """Give the client a session cookie for `user`, as a successful sign-in would."""
+    """Give the client a session cookie for `user` without a sign-in request.
+
+    A shortcut for tests about other pages. The sign-in and sign-out tests
+    go through the real routes, so the cookie the server writes is covered there.
+    """
     # The cookie jar files cookies from a dotless host such as `test` under
     # `test.local`. Setting it there too lets the server's sign-out replace it.
     domain = (
         client.base_url.host if "." in client.base_url.host else f"{client.base_url.host}.local"
     )
-    client.cookies.set("access_token", issue_token(user.id, key=TEST_SECRET_KEY), domain=domain)
+    client.cookies.set(SESSION_COOKIE, issue_token(user.id, key=TEST_SECRET_KEY), domain=domain)
 
 
 async def csrf_token(client: AsyncClient) -> str:

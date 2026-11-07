@@ -1,7 +1,9 @@
 """Registration and sign-in on the async engine used by the web app."""
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from typing import Final
 
+from psycopg import errors as pg_errors
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,20 +12,24 @@ from starlette.concurrency import run_in_threadpool
 from vacancy_radar.auth.passwords import hash_password, verify_password, verify_unknown_account
 from vacancy_radar.db.models import User
 from vacancy_radar.domain.accounts import (
+    INVALID_EMAIL,
     MAX_PASSWORD_LENGTH,
     email_error,
     normalize_email,
     password_error,
 )
 
-EMAIL_TAKEN = "An account with this email already exists."
+EMAIL_TAKEN: Final = "An account with this email already exists."
 
 
-@dataclass
 class RegistrationError(Exception):
     """The form cannot become an account. `errors` maps a field to its message."""
 
-    errors: dict[str, str] = field(default_factory=dict)
+    def __init__(self, errors: Mapping[str, str]) -> None:
+        if not errors:
+            raise ValueError("a RegistrationError needs at least one field error")
+        self.errors = dict(errors)
+        super().__init__("; ".join(f"{field}: {message}" for field, message in self.errors.items()))
 
 
 async def register(session: AsyncSession, email: str, password: str) -> User:
@@ -42,14 +48,15 @@ async def register(session: AsyncSession, email: str, password: str) -> User:
         raise RegistrationError(errors)
 
     user = User(email=email, password_hash=await run_in_threadpool(hash_password, password))
+    session.add(user)
     try:
-        async with session.begin_nested():
-            session.add(user)
+        await session.commit()
     except IntegrityError as exc:
-        if _constraint(exc) == "uq_app_user_email":
-            raise RegistrationError({"email": EMAIL_TAKEN}) from exc
-        raise
-    await session.commit()
+        await session.rollback()
+        error = _registration_error(exc)
+        if error is None:
+            raise
+        raise error from exc
     return user
 
 
@@ -74,6 +81,19 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
     return user
 
 
-def _constraint(exc: IntegrityError) -> str | None:
-    diag = getattr(exc.orig, "diag", None)
-    return getattr(diag, "constraint_name", None)
+def _registration_error(exc: IntegrityError) -> RegistrationError | None:
+    """The form error for a constraint the new account violated, if it is ours."""
+    orig = exc.orig
+    if isinstance(orig, pg_errors.UniqueViolation) and orig.diag.constraint_name == (
+        "uq_app_user_email"
+    ):
+        return RegistrationError({"email": EMAIL_TAKEN})
+    # Python and Postgres lower-case by different Unicode versions, so a few
+    # letters Python leaves alone are upper case to Postgres (U+A7CB on
+    # Postgres 16 with glibc 2.41, for one). Such an email is refused rather
+    # than stored in a form that sign-in could not match.
+    if isinstance(orig, pg_errors.CheckViolation) and orig.diag.constraint_name == (
+        "ck_app_user_email_lowercase"
+    ):
+        return RegistrationError({"email": INVALID_EMAIL})
+    return None

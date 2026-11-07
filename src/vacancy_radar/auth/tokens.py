@@ -11,22 +11,8 @@ from typing import Final
 
 import jwt
 
-from vacancy_radar.config import Settings
-
 ALGORITHM: Final = "HS256"
 TOKEN_TTL: Final = timedelta(days=7)
-# HS256 keys shorter than the 256-bit hash output weaken the signature.
-MIN_KEY_LENGTH: Final = 32
-
-
-def signing_key(settings: Settings) -> str:
-    """The secret that signs tokens. Raises when it is missing or too short."""
-    if settings.secret_key is None:
-        raise RuntimeError("SECRET_KEY is required for the web app")
-    key = settings.secret_key.get_secret_value()
-    if len(key) < MIN_KEY_LENGTH:
-        raise RuntimeError(f"SECRET_KEY must be at least {MIN_KEY_LENGTH} characters")
-    return key
 
 
 def issue_token(user_id: int, *, key: str, now: datetime | None = None) -> str:

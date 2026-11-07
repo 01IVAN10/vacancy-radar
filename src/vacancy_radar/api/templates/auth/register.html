@@ -5,6 +5,7 @@
   <h1>Sign up</h1>
   <form method="post" action="/register" novalidate>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ next }}">
     <label>
       Email
       <input type="email" name="email" value="{{ email }}" autocomplete="email" required
@@ -23,6 +24,6 @@
     </label>
     <button type="submit">Create account</button>
   </form>
-  <p>Already have an account? <a href="/login">Sign in</a></p>
+  <p>Already have an account? <a href="/login{% if next != '/' %}?next={{ next | urlencode }}{% endif %}">Sign in</a></p>
 </article>
 {% endblock %}

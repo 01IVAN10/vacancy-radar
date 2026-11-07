@@ -1,48 +1,53 @@
-"""Dependencies shared by the routes: the database session and the signed-in user."""
+"""What the routes depend on: the web app's config, a database session, the signed-in user."""
 
-from collections.abc import AsyncIterator
-from typing import Annotated, Final
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
+from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vacancy_radar.auth.tokens import read_token, signing_key
-from vacancy_radar.config import get_settings
-from vacancy_radar.db.engine import get_async_sessionmaker
-from vacancy_radar.db.models import User
+from vacancy_radar.auth.session import SignedInUser
 
-SESSION_COOKIE: Final = "access_token"
+# Opens a session for one unit of work: `async with sessions() as session`.
+Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
+@dataclass(frozen=True, slots=True)
+class WebConfig:
+    """Settings the web app resolved once at startup, kept in `app.state.config`."""
+
+    secret_key: str
+    cookie_secure: bool
+    sessions: Sessions
+
+
+def web_config(request: Request) -> WebConfig:
+    config: WebConfig = request.app.state.config
+    return config
+
+
+Config = Annotated[WebConfig, Depends(web_config)]
+
+
+async def get_session(config: Config) -> AsyncIterator[AsyncSession]:
     """One session per request. Routes and services commit what they change."""
-    async with get_async_sessionmaker()() as session:
+    async with config.sessions() as session:
         yield session
 
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
 
-async def current_user(request: Request, session: DbSession) -> User | None:
-    """The user the session cookie names, or None.
-
-    A missing, expired or forged token and a deleted account all mean
-    "signed out". The user is also kept in `request.state.user`, so every
-    template can show the navigation for them.
-    """
-    request.state.user = None
-    token = request.cookies.get(SESSION_COOKIE)
-    if token is None:
-        return None
-    user_id = read_token(token, key=signing_key(get_settings()))
-    if user_id is None:
-        return None
-    user = await session.get(User, user_id)
-    request.state.user = user
+def current_user(request: Request) -> SignedInUser | None:
+    """The signed-in user, which `CurrentUserMiddleware` resolved for every request."""
+    user: SignedInUser | None = request.state.user
     return user
 
 
-OptionalUser = Annotated[User | None, Depends(current_user)]
+OptionalUser = Annotated[SignedInUser | None, Depends(current_user)]
 
 
 class LoginRequiredError(Exception):
@@ -53,13 +58,25 @@ class LoginRequiredError(Exception):
         self.next_path = next_path
 
 
-async def require_user(request: Request, user: OptionalUser) -> User:
+def require_user(request: Request, user: OptionalUser) -> SignedInUser:
     if user is None:
-        path = request.url.path
-        if request.url.query:
-            path = f"{path}?{request.url.query}"
-        raise LoginRequiredError(path)
+        raise LoginRequiredError(_page_path(request))
     return user
 
 
-CurrentUser = Annotated[User, Depends(require_user)]
+CurrentUser = Annotated[SignedInUser, Depends(require_user)]
+
+
+def _page_path(request: Request) -> str:
+    """The page to return to after sign-in.
+
+    An HTMX request asks for a fragment, so its own URL is not a page. HTMX
+    sends the URL of the page it was made from in `HX-Current-URL`. Only the
+    path and query are kept, and sign-in checks them again with `safe_next`.
+    """
+    url = urlsplit(str(request.url))
+    current = request.headers.get("HX-Current-URL")
+    if request.headers.get("HX-Request") == "true" and current:
+        url = urlsplit(current)
+    path = url.path or "/"
+    return f"{path}?{url.query}" if url.query else path

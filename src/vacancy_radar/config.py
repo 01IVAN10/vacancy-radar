@@ -1,10 +1,13 @@
 """Application settings loaded from environment variables and `.env`."""
 
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import PostgresDsn, RedisDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# HS256 keys shorter than its 256-bit output weaken the signature.
+MIN_SECRET_KEY_LENGTH: Final = 32
 
 
 class Settings(BaseSettings):
@@ -19,7 +22,8 @@ class Settings(BaseSettings):
 
     `secret_key` signs session tokens. Like `redis_url` it is optional, so the
     collector and Alembic run without it, and `create_app()` fails at startup
-    when it is missing or too short.
+    when it is missing. A key shorter than `MIN_SECRET_KEY_LENGTH` is rejected
+    here, by every process that reads it.
 
     `disabled_sources` is the kill switch: a comma-separated list of source
     slugs (`DISABLED_SOURCES=dou`) that are never fetched, so a source can be
