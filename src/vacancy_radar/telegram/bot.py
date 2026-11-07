@@ -32,16 +32,21 @@ def handle_update(session: Session, update: Update, *, now: datetime, site_url: 
     page = escape(f"{site_url}/telegram")
 
     if command == "/start" and argument:
-        email = link_chat(session, argument, message.chat.id, now=now)
-        if email is None:
+        linked = link_chat(session, argument, message.chat.id, now=now)
+        if linked is None:
             return (
                 "This link has expired or was already used. "
                 f"Get a new one on {page} and press Start again."
             )
+        moved = (
+            "It was linked to another account until now, which gets nothing here any more.\n\n"
+            if linked.moved_from_another_account
+            else ""
+        )
         return (
-            f"This chat is now linked to <b>{escape(email)}</b>. "
+            f"This chat is now linked to <b>{escape(linked.email)}</b>. "
             "New vacancies that match your active subscriptions will arrive here.\n\n"
-            "Send /stop to unlink it."
+            f"{moved}Send /stop to unlink it."
         )
     if command == "/stop":
         if unlink_chat(session, message.chat.id):

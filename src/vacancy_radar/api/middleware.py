@@ -34,6 +34,10 @@ class CurrentUserMiddleware:
             return None
         async with self.config.sessions() as session:
             row = (
-                await session.execute(select(User.id, User.email).where(User.id == user_id))
+                await session.execute(
+                    select(User.id, User.email, User.telegram_linked_at).where(User.id == user_id)
+                )
             ).one_or_none()
-        return None if row is None else SignedInUser(id=row.id, email=row.email)
+        if row is None:
+            return None
+        return SignedInUser(id=row.id, email=row.email, telegram_linked_at=row.telegram_linked_at)

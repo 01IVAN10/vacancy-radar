@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 from vacancy_radar.db.models import TelegramLinkToken, User
 from vacancy_radar.telegram.linking import (
     LINK_TOKEN_TTL,
+    Linked,
     deep_link,
     hash_token,
     issue_link_token,
     link_chat,
-    linked_at,
     new_token,
     unlink_chat,
     unlink_user,
@@ -117,17 +117,19 @@ async def test_a_new_token_replaces_the_previous_one(async_session: AsyncSession
 
 
 @pytest.mark.anyio
-async def test_linked_at_and_unlinking(async_session: AsyncSession) -> None:
+async def test_unlinking_from_the_site(async_session: AsyncSession) -> None:
     user = await add_async_user(async_session)
-    assert await linked_at(async_session, user.id) is None
     user.telegram_chat_id, user.telegram_linked_at = CHAT, NOW
     await async_session.commit()
 
-    assert await linked_at(async_session, user.id) == NOW
-
     await unlink_user(async_session, user.id)
 
-    assert await linked_at(async_session, user.id) is None
+    stored = (
+        await async_session.execute(
+            select(User.telegram_chat_id, User.telegram_linked_at).where(User.id == user.id)
+        )
+    ).one()
+    assert tuple(stored) == (None, None)
 
 
 # --- bot side (sync) ----------------------------------------------------------------
@@ -137,7 +139,9 @@ def test_a_token_links_the_chat_to_its_account(db_session: Session) -> None:
     user = add_user(db_session)
     token = add_token(db_session, user)
 
-    assert link_chat(db_session, token, CHAT, now=NOW) == "ivan@example.com"
+    assert link_chat(db_session, token, CHAT, now=NOW) == Linked(
+        email="ivan@example.com", moved_from_another_account=False
+    )
 
     linked = reloaded(db_session, user)
     assert (linked.telegram_chat_id, linked.telegram_linked_at) == (CHAT, NOW)
@@ -175,8 +179,8 @@ def test_a_chat_linked_to_another_account_moves(db_session: Session) -> None:
     second = add_user(db_session, "second@example.com")
     link_chat(db_session, add_token(db_session, first), CHAT, now=NOW)
 
-    assert link_chat(db_session, add_token(db_session, second), CHAT, now=NOW) == (
-        "second@example.com"
+    assert link_chat(db_session, add_token(db_session, second), CHAT, now=NOW) == Linked(
+        email="second@example.com", moved_from_another_account=True
     )
     assert reloaded(db_session, first).telegram_chat_id is None
     assert reloaded(db_session, first).telegram_linked_at is None

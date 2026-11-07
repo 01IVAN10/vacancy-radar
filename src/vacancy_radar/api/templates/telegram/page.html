@@ -23,7 +23,7 @@
       <p>
         <a href="{{ link }}" role="button" target="_blank" rel="noopener noreferrer">Open @{{ bot_username }}</a>
       </p>
-      <p><small>Then reload this page to see the chat linked.</small></p>
+      <p><small>Pressed Start? <a href="{{ url_for('telegram_page').path }}">Check the status</a>.</small></p>
     </article>
   {% else %}
     <form method="post" action="{{ url_for('telegram_link').path }}">

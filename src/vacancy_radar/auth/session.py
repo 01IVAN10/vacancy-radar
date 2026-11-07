@@ -7,6 +7,7 @@ with other attributes than the sign-in would silently leave the user signed in.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final
 
 from starlette.responses import Response
@@ -18,10 +19,15 @@ SESSION_COOKIE: Final = "access_token"
 
 @dataclass(frozen=True, slots=True)
 class SignedInUser:
-    """The account a request is signed in as, detached from any database session."""
+    """The account a request is signed in as, detached from any database session.
+
+    `telegram_linked_at` is when a Telegram chat was linked to the account,
+    or None without one. Pages show it from here, so none has to query it.
+    """
 
     id: int
     email: str
+    telegram_linked_at: datetime | None
 
 
 def set_session_cookie(response: Response, user_id: int, *, key: str, secure: bool) -> None:

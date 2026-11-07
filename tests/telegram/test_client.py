@@ -8,15 +8,26 @@ import respx
 import structlog
 
 from tests.support import fixture_bytes
+from vacancy_radar import __version__
 from vacancy_radar.log import configure_logging
 from vacancy_radar.telegram.client import (
     API_URL,
+    DEFAULT_RETRY_AFTER_SECONDS,
+    LONG_POLL_MARGIN_SECONDS,
     Chat,
     Message,
+    TelegramApiError,
     TelegramClient,
+    TelegramConflictError,
     TelegramError,
+    TelegramForbiddenError,
+    TelegramMalformedError,
+    TelegramRateLimitedError,
+    TelegramServerError,
+    TelegramUnauthorizedError,
     TelegramUnavailableError,
     Update,
+    build_http,
 )
 
 TOKEN = "7000000001:AAtest-token-that-must-never-be-logged"
@@ -31,7 +42,7 @@ def api() -> Iterator[respx.MockRouter]:
 
 @pytest.fixture
 def client() -> Iterator[TelegramClient]:
-    with httpx.Client() as http:
+    with build_http() as http:
         yield TelegramClient(http, TOKEN)
 
 
@@ -87,71 +98,136 @@ def test_send_message_sends_html_without_a_preview(
 
 
 @pytest.mark.parametrize(
-    ("fixture", "status", "error_code", "retry_after"),
+    ("fixture", "status", "error_type", "retryable"),
     [
-        ("too_many_requests", 429, 429, 17),
-        ("bot_blocked", 403, 403, None),
-        ("chat_not_found", 400, 400, None),
-        ("conflict", 409, 409, None),
-        ("unauthorized", 401, 401, None),
+        ("too_many_requests", 429, TelegramRateLimitedError, True),
+        ("unauthorized", 401, TelegramUnauthorizedError, False),
+        ("bot_blocked", 403, TelegramForbiddenError, False),
+        ("conflict", 409, TelegramConflictError, False),
+        ("chat_not_found", 400, TelegramApiError, False),
     ],
 )
-def test_an_error_answer_raises_telegram_error(
+def test_an_error_answer_is_classified(
     api: respx.MockRouter,
     client: TelegramClient,
     fixture: str,
     status: int,
-    error_code: int,
-    retry_after: int | None,
+    error_type: type[TelegramApiError],
+    retryable: bool,
 ) -> None:
     api.post("/sendMessage").mock(return_value=reply(fixture, status))
 
-    with pytest.raises(TelegramError) as caught:
+    with pytest.raises(error_type) as caught:
         client.send_message(123456789, "Hello")
 
     error = caught.value
-    assert (error.method, error.error_code, error.retry_after) == (
-        "sendMessage",
-        error_code,
-        retry_after,
-    )
-    assert str(error).startswith(f"sendMessage: {error_code} ")
+    assert type(error) is error_type
+    assert (error.method, error.error_code, error.retryable) == ("sendMessage", status, retryable)
+    assert str(error).startswith(f"sendMessage: {status} ")
 
 
-def test_an_answer_that_is_not_bot_api_json_raises_with_the_http_status(
-    api: respx.MockRouter, client: TelegramClient
-) -> None:
-    api.post("/sendMessage").mock(return_value=httpx.Response(502, text="<html>Bad Gateway</html>"))
+def test_429_carries_how_long_to_wait(api: respx.MockRouter, client: TelegramClient) -> None:
+    api.post("/sendMessage").mock(return_value=reply("too_many_requests", 429))
 
-    with pytest.raises(TelegramError) as caught:
+    with pytest.raises(TelegramRateLimitedError) as caught:
         client.send_message(123456789, "Hello")
 
-    assert caught.value.error_code == 502
+    assert caught.value.retry_after == 17
+
+
+def test_429_without_retry_after_waits_the_default(
+    api: respx.MockRouter, client: TelegramClient
+) -> None:
+    body = {"ok": False, "error_code": 429, "description": "Too Many Requests"}
+    api.post("/sendMessage").mock(return_value=httpx.Response(429, json=body))
+
+    with pytest.raises(TelegramRateLimitedError) as caught:
+        client.send_message(123456789, "Hello")
+
+    assert caught.value.retry_after == DEFAULT_RETRY_AFTER_SECONDS
 
 
 @pytest.mark.parametrize(
-    "result",
+    "response",
     [
-        pytest.param({"ok": True, "result": {"id": 1}}, id="getMe-without-username"),
-        pytest.param({"ok": True, "result": "nope"}, id="result-not-an-object"),
+        pytest.param(
+            httpx.Response(
+                500, json={"ok": False, "error_code": 500, "description": "Internal Server Error"}
+            ),
+            id="bot-api-json",
+        ),
+        pytest.param(httpx.Response(502, text="<html>Bad Gateway</html>"), id="proxy-html"),
     ],
 )
-def test_an_unexpected_result_shape_raises(
-    api: respx.MockRouter, client: TelegramClient, result: object
+def test_a_server_error_is_retryable(
+    api: respx.MockRouter, client: TelegramClient, response: httpx.Response
 ) -> None:
-    api.post("/getMe").mock(return_value=httpx.Response(200, json=result))
+    api.post("/sendMessage").mock(return_value=response)
 
-    with pytest.raises(TelegramError, match="unexpected result shape"):
-        client.get_me()
+    with pytest.raises(TelegramServerError) as caught:
+        client.send_message(123456789, "Hello")
+
+    assert caught.value.retryable
+    assert caught.value.error_code == response.status_code
 
 
-def test_get_updates_refuses_a_result_that_is_not_a_list(
+@pytest.mark.parametrize(
+    ("method", "response"),
+    [
+        pytest.param(
+            "getMe", httpx.Response(200, json={"ok": True, "result": {"id": 1}}), id="no-username"
+        ),
+        pytest.param(
+            "getMe", httpx.Response(200, json={"ok": True, "result": "nope"}), id="not-an-object"
+        ),
+        pytest.param("getMe", httpx.Response(200, text="<html>Welcome</html>"), id="not-json"),
+        pytest.param("getMe", httpx.Response(404, text="Not Found"), id="not-json-4xx"),
+        pytest.param(
+            "getUpdates", httpx.Response(200, json={"ok": True, "result": {}}), id="not-a-list"
+        ),
+    ],
+)
+def test_an_answer_not_shaped_like_the_bot_api_is_malformed(
+    api: respx.MockRouter, client: TelegramClient, method: str, response: httpx.Response
+) -> None:
+    api.post(f"/{method}").mock(return_value=response)
+
+    with pytest.raises(TelegramMalformedError) as caught:
+        client.get_me() if method == "getMe" else client.get_updates(offset=None, timeout=0)
+
+    assert not caught.value.retryable
+
+
+def test_an_update_without_an_id_does_not_hide_the_others(
     api: respx.MockRouter, client: TelegramClient
 ) -> None:
-    api.post("/getUpdates").mock(return_value=httpx.Response(200, json={"ok": True, "result": {}}))
+    result = [{"message": {"chat": {"id": 1, "type": "private"}}}, {"update_id": 9}]
+    api.post("/getUpdates").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": result})
+    )
 
-    with pytest.raises(TelegramError, match="unexpected result shape"):
-        client.get_updates(offset=None, timeout=0)
+    assert client.get_updates(offset=None, timeout=0) == [Update(9, None)]
+
+
+def test_a_long_poll_waits_longer_than_telegram_holds_it(
+    api: respx.MockRouter, client: TelegramClient
+) -> None:
+    polled = api.post("/getUpdates").mock(return_value=reply("get_updates_empty"))
+    sent = api.post("/sendMessage").mock(return_value=reply("send_message"))
+
+    client.get_updates(offset=None, timeout=50)
+    client.send_message(1, "Hello")
+
+    poll_timeout = polled.calls.last.request.extensions["timeout"]
+    assert poll_timeout["read"] == 50 + LONG_POLL_MARGIN_SECONDS
+    # Other calls keep the client's own, short timeout.
+    assert sent.calls.last.request.extensions["timeout"]["read"] == 10
+
+
+def test_the_bot_api_client_is_its_own() -> None:
+    with build_http() as http:
+        assert http.headers["User-Agent"] == f"vacancy-radar/{__version__}"
+        assert http.timeout.read == 10
 
 
 @pytest.mark.parametrize(
@@ -169,6 +245,8 @@ def test_a_transport_failure_raises_unavailable(
     with pytest.raises(TelegramUnavailableError) as caught:
         client.send_message(123456789, "Hello")
 
+    assert caught.value.retryable
+    assert isinstance(caught.value, TelegramError)
     assert str(caught.value) == f"sendMessage: {type(error).__name__}"
     # Not chained: an httpx error can quote the URL, and the URL holds the token.
     assert caught.value.__cause__ is None
