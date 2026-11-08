@@ -1,7 +1,8 @@
 """Rows for notification tests, written straight to the tables.
 
 Vacancies are inserted already normalized instead of going through the
-parsers, so each test states exactly the fields matching reads.
+parsers, so each test states exactly the fields matching reads. Each one gets
+a unique company, so no clustering rule can take two of them for the same job.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -11,9 +12,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from vacancy_radar.collect.service import ensure_source
-from vacancy_radar.db.models import RawVacancy, Subscription, User, Vacancy
+from vacancy_radar.db.models import RawVacancy, Subscription, User, Vacancy, VacancyCluster
 from vacancy_radar.domain.normalize import NORMALIZER_VERSION
-from vacancy_radar.notify.clusters import assign_clusters
 from vacancy_radar.sources import ADAPTERS
 
 NOW = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
@@ -74,10 +74,14 @@ def add_vacancy(
     first_seen_at: datetime = NOW - timedelta(hours=2),
     normalized_at: datetime = NOW - timedelta(hours=2),
     title: str = "Python Developer",
+    company: str | None = None,
     skills: list[str] | None = None,
     **columns: Any,
 ) -> Vacancy:
-    """A normalized Djinni vacancy whose raw item was first seen at `first_seen_at`."""
+    """A normalized Djinni vacancy whose raw item was first seen at `first_seen_at`.
+
+    `company` defaults to one unique to this vacancy.
+    """
     external_id = str(next(_ids))
     url = f"https://djinni.co/jobs/{external_id}/"
     raw = RawVacancy(
@@ -94,7 +98,7 @@ def add_vacancy(
         source_id=raw.source_id,
         url=url,
         title=title,
-        company="Acme",
+        company=f"Company {external_id}" if company is None else company,
         cities=["Kyiv"],
         skills=["python"] if skills is None else skills,
         seniority=[],
@@ -110,7 +114,16 @@ def add_vacancy(
 
 
 def add_clustered_vacancy(session: Session, **fields: Any) -> Vacancy:
+    """A vacancy in a cluster of its own, created here rather than by the clustering rule.
+
+    Notification tests do not depend on how vacancies are grouped; only the
+    clustering tests run the real rule.
+    """
     vacancy = add_vacancy(session, **fields)
-    assign_clusters(session)
-    session.refresh(vacancy)
+    raw = session.get_one(RawVacancy, vacancy.raw_vacancy_id)
+    cluster = VacancyCluster(first_seen_at=raw.first_seen_at)
+    session.add(cluster)
+    session.flush()
+    vacancy.cluster_id = cluster.id
+    session.flush()
     return vacancy
