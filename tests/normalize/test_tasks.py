@@ -10,8 +10,8 @@ from tests.support import fixture_bytes
 from vacancy_radar.collect.service import ensure_source, upsert_raw_items
 from vacancy_radar.normalize import tasks
 from vacancy_radar.normalize.tasks import normalize_pending_task
+from vacancy_radar.ratelimit import TokenBucket
 from vacancy_radar.sources import ADAPTERS, dou
-from vacancy_radar.sources.ratelimit import TokenBucket
 
 
 @pytest.fixture(autouse=True)

@@ -9,9 +9,9 @@ from dataclasses import asdict
 
 import structlog
 
-from vacancy_radar.collect.tasks import get_rate_limiter
 from vacancy_radar.db.engine import get_sessionmaker
 from vacancy_radar.normalize.service import convert_salaries, normalize_pending
+from vacancy_radar.ratelimit import get_rate_limiter
 from vacancy_radar.sources.http import build_client
 from vacancy_radar.worker import celery_app
 

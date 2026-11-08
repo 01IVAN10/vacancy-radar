@@ -1,8 +1,8 @@
 """Celery application for background workers and the Beat scheduler.
 
-Collection and reprocessing stay independent of Celery: the tasks in
-`vacancy_radar.collect.tasks` and `vacancy_radar.normalize.tasks` are thin
-wrappers around plain functions.
+Collection, reprocessing and notifications stay independent of Celery: the
+tasks in `vacancy_radar.collect.tasks`, `vacancy_radar.normalize.tasks` and
+`vacancy_radar.notify.tasks` are thin wrappers around plain functions.
 """
 
 from collections.abc import Iterable
@@ -27,10 +27,17 @@ COLLECT_EXPIRES_SECONDS = 240
 # raw items, so most runs find nothing to do and finish at once.
 NORMALIZE_EVERY = timedelta(minutes=10)
 NORMALIZE_EXPIRES_SECONDS = 540
+# Matching runs every few minutes, like reprocessing. Sending runs every
+# minute: it is also how a delivery waiting for a retry is picked up, and one
+# run (at most 50 messages at one a second) fits in that minute.
+NOTIFY_MATCH_EVERY = timedelta(minutes=5)
+NOTIFY_MATCH_EXPIRES_SECONDS = 240
+NOTIFY_SEND_EVERY = timedelta(minutes=1)
+NOTIFY_SEND_EXPIRES_SECONDS = 50
 
 
 def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str, Any]]:
-    """The reprocessing task, and one `fetch_source` entry per source.
+    """One `fetch_source` entry per source, then reprocessing and notifications.
 
     Separate entries per source mean a slow source never delays another.
     """
@@ -48,6 +55,16 @@ def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str
         "schedule": NORMALIZE_EVERY,
         "options": {"expires": NORMALIZE_EXPIRES_SECONDS},
     }
+    schedule["notify-match"] = {
+        "task": "notify.match",
+        "schedule": NOTIFY_MATCH_EVERY,
+        "options": {"expires": NOTIFY_MATCH_EXPIRES_SECONDS},
+    }
+    schedule["notify-send"] = {
+        "task": "notify.send",
+        "schedule": NOTIFY_SEND_EVERY,
+        "options": {"expires": NOTIFY_SEND_EXPIRES_SECONDS},
+    }
     return schedule
 
 
@@ -60,7 +77,11 @@ def create_celery() -> Celery:
         "vacancy_radar",
         broker=str(redis_url),
         backend=str(redis_url),
-        include=["vacancy_radar.collect.tasks", "vacancy_radar.normalize.tasks"],
+        include=[
+            "vacancy_radar.collect.tasks",
+            "vacancy_radar.normalize.tasks",
+            "vacancy_radar.notify.tasks",
+        ],
     )
     app.conf.update(
         task_acks_late=True,

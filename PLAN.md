@@ -6,17 +6,15 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 
 ## Current state
 
-Updated 2026-11-07.
+Updated 2026-11-08.
 
 - **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
 - **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
 - **Stage 5** is done: `raw_vacancy` is normalized into `vacancy` (salary in its currency and in monthly USD, seniority, work format, skills, DOU company and places) by `python -m vacancy_radar.normalize` and the Celery task `normalize.pending`. See `docs/normalization.md`. It runs locally only. Neon keeps accumulating raw data, and vacancies are rebuilt from it on the VPS (stage 11).
 - **Stage 6** is done: accounts with sign-in and CSRF protection (`docs/auth.md`), and subscription pages at `/subscriptions` (`docs/subscriptions.md`).
-- **Stage 7** is in progress, split into three PRs. Matching (#24) and Telegram linking (#25) are merged: `matches()` in `domain/matching.py` (`docs/subscriptions.md`, Matching), a Bot API client, one-time deep-link tokens, `/telegram`, and the long-polling `bot` Compose service (`docs/telegram.md`). Both went through a review round. Linking was checked by hand with a real bot.
-- **Not done in stage 7:** part 3, `feat/telegram-notifications`. Its plan: a singleton `vacancy_cluster` per vacancy for now (stage 8 replaces the rule), `subscription.active_since`, `notification` unique on `(subscription_id, cluster_id)`, `notify.match` and `notify.send` tasks with 429 handling, and the rerun tests. Not started yet, on purpose.
-- **Not checked by hand yet:** that a `docker compose restart bot` does not answer the last message again. The tests cover it.
-- **Problems on the way:** the review found that unknown seniority, format and salary let a one-criterion subscription match almost every vacancy, and that the bot re-answered its last batch after every restart. Both are fixed. The local dev database had to be migrated by hand before the site could link a chat (`uv run alembic upgrade head`).
-- **Next:** stage 7 part 3 (notifications), once the author starts it. In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
+- **Stage 7** is done: subscription matching (#24), Telegram linking (#25) and notifications. `notify.match` gives each vacancy a cluster of its own and records the matches in `notification`, unique on `(subscription_id, cluster_id)`, with one `delivery` per account and cluster; `notify.send` sends each delivery at most once, with 429 handling (`docs/telegram.md`, Delivery). The bot's restart behaviour and delivery end to end were checked by hand on 2026-11-08: a Djinni run brought 46 new vacancies, 14 matched, and each arrived in Telegram once.
+- **Problems on the way:** the review found that unknown seniority, format and salary let a one-criterion subscription match almost every vacancy, and that the bot re-answered its last batch after every restart. Both are fixed. A salary not yet converted from UAH would have read as no salary, so matching waits up to an hour for conversion. A request that timed out after it was sent may have been delivered, so it is not retried.
+- **Next:** stage 8 (deduplication). In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
 
 ## Phase A: Start accumulating data
 
@@ -96,19 +94,26 @@ Decisions (2026-11-07): the account table is `app_user`, because `user` is reser
 - [x] Bot API client on httpx
 - [x] Deep-link account linking with a one-time token
 - [x] Subscription matching in `domain/`
-- [ ] Model `notification` with unique `(subscription_id, cluster_id)`
-- [ ] Send task with Telegram 429 handling
-- [ ] Tests: matching, no duplicate sends on rerun
+- [x] Model `notification` with unique `(subscription_id, cluster_id)`
+- [x] Send task with Telegram 429 handling
+- [x] Tests: matching, no duplicate sends on rerun
 
 Decisions (2026-11-07):
 - **Matching.** Each criterion is met, failed or unknown. A vacancy matches when none failed and at least one was met: an unknown level, format or missing salary never rules a vacancy out, but cannot be the only reason to send it. A vacancy without skills fails a skills filter. A salary matches when the top of its monthly USD range reaches the minimum.
 - **Telegram linking.** The bot uses long polling, not a webhook. Link tokens are stored as SHA-256, live 15 minutes and are used once (`DELETE … RETURNING`). One chat belongs to one account. The bot confirms its last batch when it stops, and a rejected token stops it for good (exit 0).
 - **Delivery (part 3).** Only clusters first seen after both the subscription became active and the chat was linked are sent.
 
+Decisions (2026-11-08):
+- **Clusters now.** `vacancy_cluster` exists already, with one vacancy per cluster, so notifications are keyed by cluster from the start. A cluster's `first_seen_at` comes from its raw item. `subscription.active_since` moves on create and resume, not on edit.
+- **What is matched.** Only clusters first seen within the last 2 days. A UAH or EUR salary waits up to an hour for NBU conversion before it counts as unknown.
+- **Matches and deliveries.** `notification` is a match (unique subscription × cluster); `delivery` is the message (unique account × cluster). A subscription that matches after the message went out joins that delivery, so the database keeps a vacancy from reaching a chat twice (found in review). A delivery has no `vacancy_id`: the vacancy shown is picked from the cluster at send time, so rebuilding vacancies cannot erase what was sent.
+- **At most once.** A delivery is committed as `sending` before the request. A request that may have reached Telegram (read timeout, dropped connection, any 5xx) is marked `failed` with "outcome unknown" instead of being retried; during a Telegram outage that costs one delivery per run. 403 and 400 "chat not found" unlink the chat. The failure policy is one pure function, `notify/outcome.py`.
+- **No Celery retries for sending.** `delivery.next_attempt_at` holds the backoff, Beat sends `notify.send` every minute, and an advisory lock keeps it to one sender. The rate limiter moved to `ratelimit.py`, shared by sources and Telegram; a Redis failure counts as "no token", so the request is known not to have left.
+
 ## Phase C: Showcase features and production
 
 ### Stage 8: Deduplication
-- [ ] Model `vacancy_cluster`
+- [x] Model `vacancy_cluster` (added in stage 7: one vacancy per cluster, set by `notify/clusters.py`; this stage replaces that rule. `notification.cluster_id` is RESTRICT, so merging clusters must decide what happens to their notifications)
 - [ ] Exact fingerprint (normalized company + title + city)
 - [ ] Fuzzy match: pg_trgm candidates → rapidfuzz scoring, conservative threshold
 - [ ] Cluster assignment task

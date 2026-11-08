@@ -6,10 +6,13 @@ import structlog
 from vacancy_radar.collect.tasks import FETCH_SOURCE, fetch_source
 from vacancy_radar.config import get_settings
 from vacancy_radar.normalize.tasks import NORMALIZE_PENDING
+from vacancy_radar.notify.tasks import NOTIFY_MATCH, NOTIFY_SEND
 from vacancy_radar.sources import ADAPTERS
 from vacancy_radar.worker import (
     COLLECT_EVERY,
     NORMALIZE_EVERY,
+    NOTIFY_MATCH_EVERY,
+    NOTIFY_SEND_EVERY,
     celery_app,
     create_celery,
     ping,
@@ -46,6 +49,18 @@ def test_beat_sends_the_reprocessing_task() -> None:
     assert entry["task"] == NORMALIZE_PENDING
     assert entry["schedule"] == NORMALIZE_EVERY
     assert celery_app.tasks[NORMALIZE_PENDING].name == NORMALIZE_PENDING
+
+
+def test_beat_sends_the_notification_tasks() -> None:
+    schedule = celery_app.conf.beat_schedule
+
+    for name, task, every in (
+        ("notify-match", NOTIFY_MATCH, NOTIFY_MATCH_EVERY),
+        ("notify-send", NOTIFY_SEND, NOTIFY_SEND_EVERY),
+    ):
+        assert schedule[name]["task"] == task
+        assert schedule[name]["schedule"] == every
+        assert celery_app.tasks[task].name == task
 
 
 def test_unpicked_beat_messages_expire_before_the_next_one_is_sent() -> None:

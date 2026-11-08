@@ -10,7 +10,7 @@ transient ones:
 
 | Error | When | Retryable |
 |---|---|---|
-| `TelegramUnavailableError` | no answer: a timeout or a network error | yes |
+| `TelegramUnavailableError` | no answer: a timeout or a network error | yes (see below) |
 | `TelegramServerError` | 5xx, from Telegram or a proxy in front of it | yes |
 | `TelegramRateLimitedError` | 429; wait `retry_after` seconds | yes |
 | `TelegramUnauthorizedError` | 401: the token is wrong or was revoked | no |
@@ -18,6 +18,11 @@ transient ones:
 | `TelegramConflictError` | 409: another process polls the same bot | no |
 | `TelegramApiError` | any other `ok: false` answer, such as 400 | no |
 | `TelegramMalformedError` | an answer that is not shaped like the Bot API | no |
+
+Retrying a read is always safe, but retrying a `sendMessage` is not: when the
+connection fails after the request was sent, Telegram may have delivered the
+message. `TelegramUnavailableError.maybe_delivered` is False only when the
+request certainly never left (no connection, or no rate-limit token).
 
 **The bot token never reaches a log or an error message.** It is part of
 every request URL (`/bot<token>/<method>`). httpx's own request log is
@@ -32,6 +37,7 @@ from typing import Any, Final
 import httpx
 
 from vacancy_radar import __version__
+from vacancy_radar.ratelimit import RateLimitError, TokenBucket, rate_limit_hooks
 
 API_URL: Final = "https://api.telegram.org"
 
@@ -44,13 +50,22 @@ LONG_POLL_MARGIN_SECONDS: Final = 10
 DEFAULT_RETRY_AFTER_SECONDS: Final = 5
 
 
-def build_http() -> httpx.Client:
+# Transport errors raised before any byte of the request was sent.
+_NOT_SENT: Final = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+
+def build_http(rate_limiter: TokenBucket | None = None) -> httpx.Client:
     """The HTTP client for the Bot API: the project's name and short timeouts.
 
     Separate from the source adapters' client, whose User-Agent and timeouts
-    are agreed with the sources.
+    are agreed with the sources. With a `rate_limiter`, every request first
+    waits for a token for `api.telegram.org`, as the worker's sends do.
     """
-    return httpx.Client(headers={"User-Agent": f"vacancy-radar/{__version__}"}, timeout=TIMEOUT)
+    return httpx.Client(
+        headers={"User-Agent": f"vacancy-radar/{__version__}"},
+        timeout=TIMEOUT,
+        event_hooks=rate_limit_hooks(rate_limiter),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,9 +100,18 @@ class TelegramError(Exception):
 
 
 class TelegramUnavailableError(TelegramError):
-    """No answer from the Bot API: a timeout or a network error."""
+    """No answer from the Bot API: a timeout or a network error.
+
+    `maybe_delivered` is True when the request may have reached Telegram
+    before the connection failed, such as on a read timeout. A message sent
+    then may have been delivered, and sending it again may duplicate it.
+    """
 
     retryable = True
+
+    def __init__(self, method: str, reason: str, *, maybe_delivered: bool) -> None:
+        super().__init__(method, reason)
+        self.maybe_delivered = maybe_delivered
 
 
 class TelegramMalformedError(TelegramError):
@@ -192,9 +216,15 @@ class TelegramClient:
                 json=payload,
                 timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT,
             )
+        except RateLimitError:
+            raise TelegramUnavailableError(
+                method, "RateLimitError", maybe_delivered=False
+            ) from None
         except httpx.HTTPError as exc:
             # `from None`: the httpx exception may quote the URL, token included.
-            raise TelegramUnavailableError(method, type(exc).__name__) from None
+            raise TelegramUnavailableError(
+                method, type(exc).__name__, maybe_delivered=not isinstance(exc, _NOT_SENT)
+            ) from None
         try:
             body = response.json()
         except ValueError:

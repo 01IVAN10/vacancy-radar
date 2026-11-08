@@ -10,9 +10,14 @@ official NBU rates that salaries are converted with.
 task whenever the raw item or the parsers change. `skill` mirrors the skill
 dictionary in `domain/skills.py`, so SQL can show skill names.
 
+`vacancy_cluster` groups the vacancies that are one job posted on several
+sources. Until deduplication (stage 8) every vacancy is its own cluster.
+
 `app_user` holds accounts, and `subscription` the filters each account
 wants vacancies sent for. `telegram_link_token` holds the one-time tokens
-that link an account to a Telegram chat. `app_user` is not called `user` because that is a
+that link an account to a Telegram chat. `notification` records the clusters
+each subscription matched, and `delivery` the one message per account and
+cluster that tells about them. `app_user` is not called `user` because that is a
 reserved word in Postgres: an unquoted `SELECT * FROM user` returns the
 name of the current database role instead of failing.
 """
@@ -34,12 +39,14 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vacancy_radar.db.base import Base
+from vacancy_radar.domain.delivery import DELIVERY_STATUSES, DeliveryStatus
 from vacancy_radar.domain.seniority import LEVELS
 from vacancy_radar.domain.subscriptions import MAX_NAME_LENGTH, SKILLS_MATCHES
 from vacancy_radar.domain.work_format import WORK_FORMATS
@@ -200,6 +207,27 @@ class Vacancy(Base):
     normalizer_version: Mapped[int] = mapped_column(SmallInteger)
     raw_updated_at: Mapped[datetime]
     normalized_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # Set by `notify.clusters.assign_clusters`, never by normalization, so a
+    # rebuilt vacancy keeps its cluster and is not sent again.
+    cluster_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
+    )
+
+
+class VacancyCluster(Base):
+    """One job, however many sources posted it.
+
+    `first_seen_at` is the earliest `raw_vacancy.first_seen_at` of its
+    vacancies, not the time the cluster was created. Rebuilding the derived
+    tables from raw data therefore never makes an old vacancy look new, and
+    notifications compare it with when a subscription started.
+    """
+
+    __tablename__ = "vacancy_cluster"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    first_seen_at: Mapped[datetime] = mapped_column(index=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class Skill(Base):
@@ -294,5 +322,70 @@ class Subscription(Base):
     min_salary_usd: Mapped[int | None]
     include_unsalaried: Mapped[bool | None]
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    # When the subscription was created or last resumed. Only clusters first
+    # seen since then are sent, so resuming does not send what came during a pause.
+    active_since: Mapped[datetime] = mapped_column(server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class Delivery(Base):
+    """One Telegram message about one cluster to one account; see `domain/delivery.py`.
+
+    `(user_id, cluster_id)` is unique, so the database, not timing, keeps a
+    cluster from reaching the same chat twice: a subscription that matches
+    later joins the existing delivery instead of making a new one. It keeps
+    no `vacancy_id`: the vacancy to show is chosen from the cluster when the
+    message is sent, so rebuilding or merging vacancies never erases the
+    record of what was sent. `cluster_id` is RESTRICT: merging clusters
+    (stage 8) must decide what happens to their deliveries.
+    """
+
+    __tablename__ = "delivery"
+    __table_args__ = (
+        UniqueConstraint("user_id", "cluster_id"),
+        CheckConstraint(_one_of("status", DELIVERY_STATUSES), name="status"),
+        CheckConstraint("(status = 'sent') = (sent_at IS NOT NULL)", name="sent"),
+        Index(
+            "ix_delivery_pending_next_attempt_at",
+            "next_attempt_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
+    cluster_id: Mapped[int] = mapped_column(
+        ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
+    )
+    status: Mapped[DeliveryStatus] = mapped_column(String(8))
+    attempts: Mapped[int] = mapped_column(SmallInteger, server_default="0")
+    next_attempt_at: Mapped[datetime]
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # When the last attempt was claimed; with `sending`, how long it has hung.
+    claimed_at: Mapped[datetime | None]
+    sent_at: Mapped[datetime | None]
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class Notification(Base):
+    """A cluster that matched a subscription, and the delivery that tells its account.
+
+    `(subscription_id, cluster_id)` is unique, so matching the same cluster
+    again records nothing new. Its delivery's message names every
+    subscription matched by the time it is sent.
+    """
+
+    __tablename__ = "notification"
+    __table_args__ = (UniqueConstraint("subscription_id", "cluster_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(ForeignKey("subscription.id", ondelete="CASCADE"))
+    cluster_id: Mapped[int] = mapped_column(
+        ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
+    )
+    delivery_id: Mapped[int] = mapped_column(
+        ForeignKey("delivery.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

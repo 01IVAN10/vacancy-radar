@@ -1,8 +1,9 @@
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.support import add_user
@@ -120,6 +121,23 @@ async def test_toggle_pauses_and_resumes(async_session: AsyncSession, owner: Use
     assert paused.is_active is False
     assert resumed is not None
     assert resumed.is_active is True
+
+
+async def test_resuming_moves_active_since_and_editing_does_not(
+    async_session: AsyncSession, owner: User
+) -> None:
+    created = await service.create(async_session, owner.id, draft())
+    long_ago = datetime(2026, 1, 1, tzinfo=UTC)
+    await async_session.execute(
+        update(Subscription).where(Subscription.id == created.id).values(active_since=long_ago)
+    )
+
+    await service.update_for_user(async_session, owner.id, created.id, draft("Renamed"))
+    assert (await row_of(async_session, created)).active_since == long_ago
+    await service.toggle_active(async_session, owner.id, created.id)
+    assert (await row_of(async_session, created)).active_since == long_ago
+    await service.toggle_active(async_session, owner.id, created.id)
+    assert (await row_of(async_session, created)).active_since > long_ago
 
 
 async def test_delete_removes_the_subscription(async_session: AsyncSession, owner: User) -> None:

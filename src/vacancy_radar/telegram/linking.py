@@ -130,8 +130,14 @@ def link_chat(session: Session, token: str, chat_id: int, *, now: datetime) -> L
 
 def unlink_chat(session: Session, chat_id: int) -> bool:
     """Forget the chat on whichever account has it, and commit. False if none had it."""
+    unlinked = forget_chat(session, chat_id)
+    session.commit()
+    return unlinked
+
+
+def forget_chat(session: Session, chat_id: int) -> bool:
+    """`unlink_chat` without the commit, for callers with a transaction of their own."""
     unlinked = session.scalar(
         update(User).where(User.telegram_chat_id == chat_id).values(**UNLINKED).returning(User.id)
     )
-    session.commit()
     return unlinked is not None

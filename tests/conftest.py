@@ -27,7 +27,12 @@ from tests.support import (
 from vacancy_radar.api.deps import Sessions
 from vacancy_radar.auth.passwords import hash_password
 from vacancy_radar.config import get_settings
-from vacancy_radar.db.engine import get_sessionmaker, make_async_engine, make_engine
+from vacancy_radar.db.engine import (
+    get_engine,
+    get_sessionmaker,
+    make_async_engine,
+    make_engine,
+)
 
 # Modules such as `vacancy_radar.worker` read settings at import time, so the
 # test environment must be complete before any of them is imported. The
@@ -137,16 +142,19 @@ def committed_database(
     # fall back to a developer's `.env`, which may disable a source.
     monkeypatch.setenv("DISABLED_SOURCES", "")
     get_settings.cache_clear()
+    get_engine.cache_clear()
     get_sessionmaker.cache_clear()
     yield migrated_engine
-    get_sessionmaker().kw["bind"].dispose()
+    get_engine().dispose()
+    get_engine.cache_clear()
     get_sessionmaker.cache_clear()
     get_settings.cache_clear()
     with migrated_engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE vacancy, skill, exchange_rate, collect_run, raw_vacancy, source, "
-                "subscription, telegram_link_token, app_user RESTART IDENTITY"
+                "TRUNCATE notification, delivery, vacancy, vacancy_cluster, skill, "
+                "exchange_rate, collect_run, raw_vacancy, source, subscription, "
+                "telegram_link_token, app_user RESTART IDENTITY"
             )
         )
 

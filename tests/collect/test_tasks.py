@@ -20,15 +20,15 @@ from vacancy_radar.collect import tasks
 from vacancy_radar.collect.tasks import fetch_source, retry_expires
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.models import CollectRun, RawVacancy
+from vacancy_radar.ratelimit import KEY_PREFIX, TokenBucket, get_rate_limiter
 from vacancy_radar.sources.djinni import FEED_URL as DJINNI_FEED_URL
 from vacancy_radar.sources.djinni import DjinniAdapter
 from vacancy_radar.sources.dou import FEED_URL as DOU_FEED_URL
-from vacancy_radar.sources.ratelimit import KEY_PREFIX, TokenBucket
 from vacancy_radar.worker import COLLECT_EXPIRES_SECONDS
 
 DJINNI_FEED = fixture_bytes("djinni/rss_all.xml")
 # Kept before `task_environment` replaces it with a fast limiter.
-REAL_GET_RATE_LIMITER = tasks.get_rate_limiter
+REAL_GET_RATE_LIMITER = get_rate_limiter
 
 
 @pytest.fixture(autouse=True)

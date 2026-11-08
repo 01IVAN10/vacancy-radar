@@ -6,7 +6,7 @@ None and writes change nothing. Routes turn both into 404.
 
 Callers get `SavedSubscription`s with a domain `SubscriptionFilter`, never
 ORM rows. `filter_of` and `_write` are the one mapping between the two, and
-matching in stage 7 reads filters through `filter_of` as well.
+notifications (`notify/matching.py`) read filters through `filter_of` as well.
 """
 
 from dataclasses import dataclass
@@ -104,13 +104,19 @@ async def toggle_active(
     """Pause an active subscription or resume a paused one.
 
     The row is locked first, so two toggles at once pause and then resume
-    instead of both flipping the same state.
+    instead of both flipping the same state. Resuming moves `active_since`
+    to now, so vacancies that came during the pause are not sent.
     """
     row = await _owned(session, user_id, subscription_id, for_update=True)
     if row is None:
         return None
     row.is_active = not row.is_active
+    if row.is_active:
+        row.active_since = func.now()
     await session.commit()
+    if row.is_active:
+        # Load the database's time in place of the SQL expression set above.
+        await session.refresh(row, ["active_since"])
     return _saved(row)
 
 

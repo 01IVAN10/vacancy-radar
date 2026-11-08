@@ -1,14 +1,23 @@
-"""Token bucket rate limiter in Redis, one bucket per source domain.
+"""Token bucket rate limiter in Redis, one bucket per domain.
 
 Every worker process shares the same buckets, so the limit holds across the
 whole deployment, not per process. The collection rules in docs/sources.md
-allow at most one request per second per domain.
+allow at most one request per second per source domain, and Telegram gets
+the same one request a second (docs/telegram.md, Delivery).
+
+`rate_limit_hook` applies a bucket to an httpx client, so every request waits
+for a token for its host first. A failure of Redis itself is raised as
+`RateLimitError` too: either way no token was taken and no request was sent.
 """
 
 import time
 from collections.abc import Callable
+from functools import lru_cache
 
-from redis import Redis
+import httpx
+from redis import Redis, RedisError
+
+from vacancy_radar.config import get_settings
 
 REQUESTS_PER_SECOND = 1.0
 BURST = 1
@@ -46,7 +55,7 @@ return tostring(wait)
 
 
 class RateLimitError(Exception):
-    """No token became available within the allowed wait. No request was sent."""
+    """No token was taken: none came free within the wait, or Redis failed. No request was sent."""
 
 
 class TokenBucket:
@@ -85,10 +94,45 @@ def wait_for_token(
     max_wait: float = MAX_WAIT_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Block until a token for `key` is taken. Raises `RateLimitError` after `max_wait`."""
+    """Block until a token for `key` is taken.
+
+    Raises `RateLimitError` after `max_wait`, or when Redis fails.
+    """
     waited = 0.0
-    while (wait := bucket.acquire(key)) > 0:
+    while (wait := _acquire(bucket, key)) > 0:
         if waited + wait > max_wait:
             raise RateLimitError(f"no request token for {key} within {max_wait:g} s")
         sleep(wait)
         waited += wait
+
+
+def _acquire(bucket: TokenBucket, key: str) -> float:
+    try:
+        return bucket.acquire(key)
+    except RedisError as exc:
+        raise RateLimitError(f"no request token for {key}: {type(exc).__name__}") from exc
+
+
+def rate_limit_hooks(
+    bucket: TokenBucket | None,
+) -> dict[str, list[Callable[[httpx.Request], None]]]:
+    """`event_hooks` for an httpx client: wait for `bucket` before each request, or none."""
+    return {} if bucket is None else {"request": [rate_limit_hook(bucket)]}
+
+
+def rate_limit_hook(bucket: TokenBucket) -> Callable[[httpx.Request], None]:
+    """httpx request hook that blocks until `bucket` allows a request to the host."""
+
+    def hook(request: httpx.Request) -> None:
+        wait_for_token(bucket, request.url.host)
+
+    return hook
+
+
+@lru_cache
+def get_rate_limiter() -> TokenBucket:
+    """Process-wide token bucket on the Celery Redis."""
+    redis_url = get_settings().redis_url
+    if redis_url is None:
+        raise RuntimeError("REDIS_URL is required for the rate limiter")
+    return TokenBucket(Redis.from_url(str(redis_url)))
