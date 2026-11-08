@@ -14,6 +14,7 @@ Updated 2026-11-08.
 - **Stage 6** is done: accounts with sign-in and CSRF protection (`docs/auth.md`), and subscription pages at `/subscriptions` (`docs/subscriptions.md`).
 - **Stage 7** is done: subscription matching (#24), Telegram linking (#25) and notifications. `notify.match` gives each vacancy a cluster of its own and records the matches in `notification`, unique on `(subscription_id, cluster_id)`, with one `delivery` per account and cluster; `notify.send` sends each delivery at most once, with 429 handling (`docs/telegram.md`, Delivery). The bot's restart behaviour and delivery end to end were checked by hand on 2026-11-08: a Djinni run brought 46 new vacancies, 14 matched, and each arrived in Telegram once.
 - **Problems on the way:** the review found that unknown seniority, format and salary let a one-criterion subscription match almost every vacancy, and that the bot re-answered its last batch after every restart. Both are fixed. A salary not yet converted from UAH would have read as no salary, so matching waits up to an hour for conversion. A request that timed out after it was sent may have been delivered, so it is not retried.
+- **Before stage 8:** the architecture review of `main` (2026-11-08) is done. Its prep PRs are merged: a CI gate for `domain/` coverage ≥ 90% (#28), clustering in its own package `clusters/` with notify tests independent of it (#29), and the stage 8 rules below.
 - **Next:** stage 8 (deduplication). In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
 
 ## Phase A: Start accumulating data
@@ -113,11 +114,23 @@ Decisions (2026-11-08):
 ## Phase C: Showcase features and production
 
 ### Stage 8: Deduplication
-- [x] Model `vacancy_cluster` (added in stage 7: one vacancy per cluster, set by `clusters/service.py`; this stage replaces that rule. `notification.cluster_id` is RESTRICT, so merging clusters must decide what happens to their notifications)
+- [x] Model `vacancy_cluster` (added in stage 7: one vacancy per cluster, set by `clusters/service.py`; this stage replaces that rule. Clusters are never merged, see Decisions)
 - [ ] Exact fingerprint (normalized company + title + city)
 - [ ] Fuzzy match: pg_trgm candidates → rapidfuzz scoring, conservative threshold
 - [ ] Cluster assignment task
 - [ ] Tests on real duplicate / non-duplicate pairs
+
+Decisions (2026-11-08, before implementation):
+- **Attach-only.** A new vacancy joins an existing cluster or opens a new one; two existing clusters are never merged. So `notification.cluster_id` and `delivery.cluster_id` (both RESTRICT) and the unique `delivery (user_id, cluster_id)` need no changes. If merging is ever needed, it gets a "merged into" pointer, not repointed foreign keys. This is the conservative side: a missed duplicate is better than a wrong merge.
+- **One clustering run at a time.** An advisory lock is held for the whole run. Per-row SKIP LOCKED is not enough: two runs could open two clusters for the two halves of one duplicate pair.
+- **`cluster_id` never changes once assigned,** re-normalization included. Re-clustering an old vacancy would give it a new cluster and so a new delivery (account × cluster), which is a repeat send.
+- **A cluster matches when any of its vacancies matches** the subscription (today's behaviour, now explicit). **The message shows the most complete vacancy:** one with a salary first, then one with a company, then the lowest id. It is picked when the delivery is claimed, as now (`notify/sending.py:_card`, which today takes the lowest id; `docs/telegram.md` changes with it).
+- **A new member sends nothing.** A cluster's `first_seen_at` is the minimum over its vacancies, so a vacancy that joins an old cluster stays behind the matching watermark. This is intended: it is the same job.
+- **Facts for the implementation:**
+  - Djinni vacancies have no company (0/348), no cities (0/348) and rarely a salary (21/348) in the local DB on 2026-11-08, so an exact company + title + city fingerprint cannot work for Djinni. DOU takes company and cities from its title.
+  - Real DOU data is only in Neon. Duplicate pairs for tests come from a copy of it (README, backing up the hosted database).
+  - No migration creates `pg_trgm` yet; `tests/db/test_database.py` only checks that it is available.
+  - `rapidfuzz` is a new dependency and needs a one-line justification in its PR.
 
 ### Stage 9: Search and analytics
 - [ ] FTS `search_vector` (`simple` + `unaccent`), GIN on it and on `skills`, trigram on title
