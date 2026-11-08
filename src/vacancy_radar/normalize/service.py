@@ -21,7 +21,7 @@ from datetime import date, datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import Row, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, Row, and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -70,6 +70,22 @@ def normalize_pending(
     return stats
 
 
+def needs_conversion() -> ColumnElement[bool]:
+    """True for a vacancy whose salary `convert_salaries` has yet to convert to dollars.
+
+    That is a monthly or yearly salary in hryvnias or euros without a dollar
+    range. Never NULL, so its negation is safe in SQL too. Matching waits for
+    these (`notify/matching.py`).
+    """
+    return and_(
+        Vacancy.salary_currency.is_not(None),
+        Vacancy.salary_currency != "USD",
+        Vacancy.salary_period != "hour",
+        Vacancy.salary_usd_min.is_(None),
+        Vacancy.salary_usd_max.is_(None),
+    )
+
+
 def convert_salaries(
     session: Session, client: httpx.Client, *, sleep: Callable[[float], None] = time.sleep
 ) -> int:
@@ -90,12 +106,7 @@ def convert_salaries(
             RawVacancy.first_seen_at,
         )
         .join(RawVacancy, RawVacancy.id == Vacancy.raw_vacancy_id)
-        .where(
-            Vacancy.salary_currency != "USD",
-            Vacancy.salary_period != "hour",
-            Vacancy.salary_usd_min.is_(None),
-            Vacancy.salary_usd_max.is_(None),
-        )
+        .where(needs_conversion())
     ).all()
     if not rows:
         return 0

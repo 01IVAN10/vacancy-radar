@@ -1,10 +1,8 @@
 """The HTTP client every adapter uses."""
 
-from collections.abc import Callable
-
 import httpx
 
-from vacancy_radar.ratelimit import TokenBucket, rate_limit_hook
+from vacancy_radar.ratelimit import TokenBucket, rate_limit_hooks
 
 # The exact string agreed with DOU when it consented to collection: changing
 # it, the version included, means telling DOU (see docs/sources.md).
@@ -19,7 +17,8 @@ def build_client(rate_limiter: TokenBucket | None = None) -> httpx.Client:
     With a `rate_limiter`, every request first waits for a token for its host.
     The Celery worker passes one. The CLI runs without Redis and without one.
     """
-    hooks: dict[str, list[Callable[..., object]]] = {}
-    if rate_limiter is not None:
-        hooks["request"] = [rate_limit_hook(rate_limiter)]
-    return httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT, event_hooks=hooks)
+    return httpx.Client(
+        headers={"User-Agent": USER_AGENT},
+        timeout=TIMEOUT,
+        event_hooks=rate_limit_hooks(rate_limiter),
+    )

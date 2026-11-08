@@ -37,7 +37,7 @@ from typing import Any, Final
 import httpx
 
 from vacancy_radar import __version__
-from vacancy_radar.ratelimit import RateLimitError, TokenBucket, rate_limit_hook
+from vacancy_radar.ratelimit import RateLimitError, TokenBucket, rate_limit_hooks
 
 API_URL: Final = "https://api.telegram.org"
 
@@ -61,11 +61,10 @@ def build_http(rate_limiter: TokenBucket | None = None) -> httpx.Client:
     are agreed with the sources. With a `rate_limiter`, every request first
     waits for a token for `api.telegram.org`, as the worker's sends do.
     """
-    hooks: dict[str, list[Any]] = {}
-    if rate_limiter is not None:
-        hooks["request"] = [rate_limit_hook(rate_limiter)]
     return httpx.Client(
-        headers={"User-Agent": f"vacancy-radar/{__version__}"}, timeout=TIMEOUT, event_hooks=hooks
+        headers={"User-Agent": f"vacancy-radar/{__version__}"},
+        timeout=TIMEOUT,
+        event_hooks=rate_limit_hooks(rate_limiter),
     )
 
 

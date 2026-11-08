@@ -26,9 +26,15 @@ def make_async_engine(url: str, **kwargs: Any) -> AsyncEngine:
 
 
 @lru_cache
+def get_engine() -> Engine:
+    """Process-wide sync engine, built on first use from settings."""
+    return make_engine(str(get_settings().database_url))
+
+
+@lru_cache
 def get_sessionmaker() -> sessionmaker[Session]:
-    """Process-wide sync session factory, built on first use from settings."""
-    return sessionmaker(make_engine(str(get_settings().database_url)))
+    """Process-wide sync session factory on `get_engine()`."""
+    return sessionmaker(get_engine())
 
 
 @lru_cache

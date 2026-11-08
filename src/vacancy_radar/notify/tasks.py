@@ -1,6 +1,7 @@
 """Celery tasks for notifications: thin wrappers around the plain functions.
 
-`notify.match` clusters new vacancies and records the matches. `notify.send`
+`notify.match` clusters new vacancies and records the matches. It also warns
+(`notify.stuck_deliveries`) about deliveries a dead worker left `sending`. `notify.send`
 sends the due deliveries; Beat sends it every minute. It has no Celery retries:
 a delivery that has to wait carries its own `next_attempt_at`, and the first
 run after that sends it. One run sends at a time (`sender_lock`).
@@ -13,10 +14,10 @@ from typing import Final
 import structlog
 
 from vacancy_radar.config import get_settings
-from vacancy_radar.db.engine import get_sessionmaker
+from vacancy_radar.db.engine import get_engine, get_sessionmaker
 from vacancy_radar.notify.clusters import assign_clusters
 from vacancy_radar.notify.matching import match_new
-from vacancy_radar.notify.sending import SendResult, send_pending, sender_lock
+from vacancy_radar.notify.sending import SendResult, count_stuck, send_pending, sender_lock
 from vacancy_radar.ratelimit import get_rate_limiter
 from vacancy_radar.telegram.client import TelegramClient, TelegramUnauthorizedError, build_http
 from vacancy_radar.worker import celery_app
@@ -33,10 +34,15 @@ def match_task() -> dict[str, int]:
     with get_sessionmaker()() as session:
         clustered = assign_clusters(session)
         session.commit()
-        result = match_new(session, now=datetime.now(UTC))
+        now = datetime.now(UTC)
+        result = match_new(session, now=now)
         session.commit()
+        stuck = count_stuck(session, now=now)
     summary = {"clustered": clustered, **asdict(result)}
     logger.info("notify.matched", **summary)
+    if stuck:
+        # Left `sending` by a worker that died mid-send; never sent again.
+        logger.warning("notify.stuck_deliveries", count=stuck)
     return summary
 
 
@@ -47,12 +53,11 @@ def send_task() -> dict[str, int]:
     if settings.telegram_bot_token is None:
         logger.warning("telegram.not_configured", missing="TELEGRAM_BOT_TOKEN")
         return asdict(SendResult())
-    sessions = get_sessionmaker()
-    with sender_lock(sessions.kw["bind"]) as locked:
+    with sender_lock(get_engine()) as locked:
         if not locked:
             logger.info("notify.send_busy")
             return asdict(SendResult())
-        with build_http(rate_limiter=get_rate_limiter()) as http, sessions() as session:
+        with build_http(rate_limiter=get_rate_limiter()) as http, get_sessionmaker()() as session:
             client = TelegramClient(http, settings.telegram_bot_token.get_secret_value())
             try:
                 result = send_pending(session, client, site_url=settings.site_url)

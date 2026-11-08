@@ -3,10 +3,12 @@ from dataclasses import replace
 import pytest
 
 from vacancy_radar.notify.message import (
+    MAX_COMPANY_LENGTH,
     MAX_MESSAGE_LENGTH,
     MAX_SKILLS,
     VacancyCard,
     format_salary,
+    message_length,
     render_message,
 )
 
@@ -113,6 +115,28 @@ def test_skips_skills_no_longer_in_the_dictionary() -> None:
 
     assert "Python\n" in message
     assert "removed-skill" not in message
+
+
+def test_shortens_a_very_long_company_name() -> None:
+    message = render_message(replace(CARD, company="A" * 500), ["Any"], site_url=SITE)
+
+    assert "A" * MAX_COMPANY_LENGTH not in message
+    assert "A" * (MAX_COMPANY_LENGTH - 1) + "…" in message
+
+
+def test_counts_length_as_telegram_does() -> None:
+    assert message_length("abc") == 3
+    # Outside the Basic Multilingual Plane: two UTF-16 code units.
+    assert message_length("🚀") == 2
+
+
+def test_fits_telegrams_limit_with_names_made_of_emoji() -> None:
+    names = ["🚀" * 80 for _ in range(30)]
+
+    message = render_message(CARD, names, site_url=SITE)
+
+    assert message_length(message) <= MAX_MESSAGE_LENGTH
+    assert message.endswith("Manage subscriptions</a>")
 
 
 def test_fits_telegrams_limit_with_many_long_subscription_names() -> None:

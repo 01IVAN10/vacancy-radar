@@ -334,9 +334,11 @@ class Delivery(Base):
 
     `(user_id, cluster_id)` is unique, so the database, not timing, keeps a
     cluster from reaching the same chat twice: a subscription that matches
-    later joins the existing delivery instead of making a new one.
-    `vacancy_id` is the vacancy the message shows. `cluster_id` is RESTRICT:
-    merging clusters (stage 8) must decide what happens to their deliveries.
+    later joins the existing delivery instead of making a new one. It keeps
+    no `vacancy_id`: the vacancy to show is chosen from the cluster when the
+    message is sent, so rebuilding or merging vacancies never erases the
+    record of what was sent. `cluster_id` is RESTRICT: merging clusters
+    (stage 8) must decide what happens to their deliveries.
     """
 
     __tablename__ = "delivery"
@@ -356,13 +358,12 @@ class Delivery(Base):
     cluster_id: Mapped[int] = mapped_column(
         ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
     )
-    vacancy_id: Mapped[int] = mapped_column(
-        ForeignKey("vacancy.id", ondelete="CASCADE"), index=True
-    )
     status: Mapped[DeliveryStatus] = mapped_column(String(8))
     attempts: Mapped[int] = mapped_column(SmallInteger, server_default="0")
     next_attempt_at: Mapped[datetime]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # When the last attempt was claimed; with `sending`, how long it has hung.
+    claimed_at: Mapped[datetime | None]
     sent_at: Mapped[datetime | None]
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
     error: Mapped[str | None] = mapped_column(Text)

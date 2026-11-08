@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import redis
 import respx
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 from structlog.testing import capture_logs
 
@@ -166,3 +166,20 @@ def test_send_goes_through_the_rate_limiter(
     send_task.apply()
 
     assert hosts == ["api.telegram.org"]
+
+
+def test_match_warns_about_deliveries_left_sending(committed_database: Engine) -> None:
+    seed(committed_database)
+    match_task.apply()
+    with Session(committed_database) as session:
+        session.execute(
+            update(Delivery).values(
+                status="sending", claimed_at=datetime.now(UTC) - timedelta(hours=1)
+            )
+        )
+        session.commit()
+
+    with capture_logs() as logs:
+        match_task.apply()
+
+    assert {"event": "notify.stuck_deliveries", "count": 1, "log_level": "warning"} in logs

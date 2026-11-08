@@ -13,11 +13,13 @@ from typing import Final
 
 from vacancy_radar.domain.skills import SKILLS_BY_SLUG
 
-# Telegram's limit on a message's text, counted after entities are parsed.
-# Counting the HTML instead is stricter, so a message within it always fits.
+# Telegram's limit on a message's text, in UTF-16 code units after entities
+# are parsed. Counting the HTML instead is stricter, so a message within it
+# always fits.
 MAX_MESSAGE_LENGTH: Final = 4096
 MAX_SKILLS: Final = 8
 MAX_TITLE_LENGTH: Final = 200
+MAX_COMPANY_LENGTH: Final = 100
 MAX_CITIES: Final = 5
 
 CURRENCY_SIGNS: Final = {"USD": "$", "EUR": "€", "UAH": "₴"}
@@ -47,12 +49,13 @@ def render_message(card: VacancyCard, subscription_names: Sequence[str], *, site
 
     The subscription names are shortened to keep it within
     `MAX_MESSAGE_LENGTH`. The rest is kept short by capping the title, the
-    cities and the skills, which is enough for any vacancy seen so far, but
-    an extreme company name could still make it longer.
+    company, the cities and the skills. Only the link is never cut, so a URL
+    of thousands of characters could still make the message too long.
     """
     lines = [f"<b>{escape(_shorten(card.title, MAX_TITLE_LENGTH))}</b>"]
+    company = _shorten(card.company, MAX_COMPANY_LENGTH) if card.company else None
     cities = list(card.cities[:MAX_CITIES])
-    place = ", ".join([card.company, *cities] if card.company else cities)
+    place = ", ".join([company, *cities] if company else cities)
     if place:
         lines.append(escape(place))
     salary = format_salary(card)
@@ -73,12 +76,17 @@ def render_message(card: VacancyCard, subscription_names: Sequence[str], *, site
 
     names = ", ".join(subscription_names)
     message = _with_footer(body, names, site_url)
-    overflow = len(message) - MAX_MESSAGE_LENGTH
+    overflow = message_length(message) - MAX_MESSAGE_LENGTH
     if overflow > 0:
-        # Shortening the plain names by `overflow` shortens their escaped
-        # form by at least as much, so the result fits.
+        # Each character cut from the plain names takes at least one code
+        # unit off their escaped form, so the result fits.
         message = _with_footer(body, _shorten(names, len(names) - overflow), site_url)
     return message
+
+
+def message_length(text: str) -> int:
+    """The length Telegram counts: UTF-16 code units, so most emoji count as two."""
+    return len(text.encode("utf-16-le")) // 2
 
 
 def _with_footer(body: str, names: str, site_url: str) -> str:
@@ -93,15 +101,17 @@ def format_salary(card: VacancyCard) -> str | None:
     if card.salary_currency is None or card.salary_period is None:
         return None
     sign = CURRENCY_SIGNS.get(card.salary_currency, f"{card.salary_currency} ")
-    low, high = card.salary_min, card.salary_max
-    if low is not None and high is not None and low != high:
-        amount = f"{sign}{low}-{high}"
-    elif low is not None:
-        amount = f"from {sign}{low}" if high is None else f"{sign}{low}"
-    elif high is not None:
-        amount = f"up to {sign}{high}"
-    else:
-        return None
+    match card.salary_min, card.salary_max:
+        case int(low), int(high) if low != high:
+            amount = f"{sign}{low}-{high}"
+        case int(low), int():
+            amount = f"{sign}{low}"
+        case int(low), None:
+            amount = f"from {sign}{low}"
+        case None, int(high):
+            amount = f"up to {sign}{high}"
+        case _:
+            return None
     return f"{amount} {PERIODS.get(card.salary_period, card.salary_period)}"
 
 

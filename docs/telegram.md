@@ -99,7 +99,7 @@ flowchart LR
 
 ### Matches and deliveries
 
-A *match* is a subscription that matched a cluster: a `notification` row, unique on `(subscription_id, cluster_id)`. A *delivery* is the message it causes: a `delivery` row, unique on `(user_id, cluster_id)`. Every match points at its account's delivery for the cluster, created by the first match. So the database, not timing, keeps a vacancy from reaching a chat twice: a subscription that matches later, because it was edited, the vacancy was reparsed or its salary was converted, joins the delivery that may already have been sent. The message names every subscription matched by the time it goes out.
+A *match* is a subscription that matched a cluster: a `notification` row, unique on `(subscription_id, cluster_id)`. A *delivery* is the message it causes: a `delivery` row, unique on `(user_id, cluster_id)`. Every match points at its account's delivery for the cluster, created by the first match. A delivery keeps no vacancy of its own: the message shows the cluster's vacancy with the lowest id, chosen when it is sent, so rebuilding or merging vacancies never erases the record of what was sent. So the database, not timing, keeps a vacancy from reaching a chat twice: a subscription that matches later, because it was edited, the vacancy was reparsed or its salary was converted, joins the delivery that may already have been sent. The message names every subscription matched by the time it goes out.
 
 A cluster is matched to a subscription (`notify/matching.py`) when:
 
@@ -108,7 +108,7 @@ A cluster is matched to a subscription (`notify/matching.py`) when:
 | the subscription is active and the account has a linked chat | nothing to send to otherwise |
 | the cluster was first seen after both `subscription.active_since` and `app_user.telegram_linked_at` | creating or resuming a subscription, or linking a chat, never sends what was collected before. `active_since` is set on create and on resume, not on edit |
 | it was first seen within the last 2 days (`LOOKBACK`) | bounds each run. A worker that is down for longer skips what came meanwhile |
-| its salary in UAH or EUR is converted, or it was normalized over an hour ago (`CONVERSION_GRACE`) | a salary NBU has not converted yet would read as no salary and fail a minimum |
+| its salary needs no conversion (`normalize.service.needs_conversion`, the same rule `convert_salaries` uses), or it was normalized over an hour ago (`CONVERSION_GRACE`) | a salary NBU has not converted yet would read as no salary and fail a minimum |
 | `domain.matching.matches` says yes | see `docs/subscriptions.md`, Matching |
 
 Both inserts skip rows that already exist, so rerunning `notify.match`, or two runs at once, records nothing twice. A candidate that did not match is looked at again by each run within the lookback.
@@ -117,7 +117,7 @@ The message (`notify/message.py`) shows the title, company and cities, the salar
 
 ### At most once
 
-`send_pending` claims a delivery before sending it: it becomes `sending` with one more attempt, and that is committed before the request. A worker that dies after the request but before storing the result leaves it `sending`, and it is never sent again. A missed message is better than a duplicate, the same trade-off as conservative deduplication.
+`send_pending` claims a delivery before sending it: it becomes `sending` with one more attempt and a `claimed_at`, and that is committed before the request. A worker that dies after the request but before storing the result leaves it `sending`, and it is never sent again. A missed message is better than a duplicate, the same trade-off as conservative deduplication.
 
 | Status | Meaning |
 |---|---|
@@ -132,14 +132,20 @@ What a failed send means is one pure function, `notify.outcome.outcome_of`:
 | Failure | Delivery | Attempt counted | The run |
 |---|---|---|---|
 | 429 | `pending` after `retry_after` | no | stops |
-| 5xx, or the request certainly never left (no connection, no rate-limit token, Redis down) | `pending` after a backoff (doubling from 30 s up to 10 min, full jitter); `failed` after 5 attempts | yes | stops |
-| a timeout or a dropped connection after the request was sent | `failed`, `outcome unknown: …` | yes | goes on |
+| the request certainly never left (no connection, no rate-limit token, Redis down) | `pending` after a backoff (doubling from 30 s up to 10 min, full jitter); `failed` after 5 attempts | yes | stops |
+| a 5xx, or a timeout or a dropped connection after the request was sent | `failed`, `outcome unknown: …` | yes | stops |
 | 403 (the user blocked the bot), or 400 "chat not found" | `failed`, and the chat is unlinked; the account's other deliveries become `skipped` | yes | goes on |
 | 401: the token was rejected | `pending` at once. Logged as `telegram.token_rejected` | no | the task fails |
 | any other Telegram error, such as 400 | `failed` | yes | goes on |
 | an error of our own before the request, such as a bug in rendering | `pending` after a backoff; `failed` after 5 attempts | yes | the task fails |
 
+A 5xx counts as "may have arrived", because a gateway in front of the Bot API can answer with one after the message went out. The cost: during a Telegram outage each run gives up one delivery before it stops, up to one a minute.
+
 There are no Celery retries: `next_attempt_at` is the only clock, and the first `notify.send` after it picks the delivery up. Without `TELEGRAM_BOT_TOKEN` the task logs `telegram.not_configured` and leaves the deliveries pending.
+
+`notify.match` logs `notify.stuck_deliveries` with their count while any delivery has been `sending` for over 10 minutes since its claim: its worker died mid-send, and it is never sent again.
+
+The message stays within Telegram's 4096 characters, counted as Telegram does in UTF-16 code units: the title, company, cities and skills are capped and the subscription names are shortened. Only the link is never cut.
 
 Accepted risks: a connection Telegram closed while idle surfaces as `RemoteProtocolError` and counts as "outcome unknown", so such a message is lost rather than risked twice; runs send one request a second, so connections are rarely idle. A 429 stops the whole run even if it concerned one chat; at one request a second it is not expected at all.
 
@@ -151,8 +157,8 @@ SELECT status, count(*) FROM delivery
 WHERE created_at > now() - interval '1 day' GROUP BY status;
 
 -- Deliveries a dead worker left claimed: never sent again, check them by hand.
-SELECT id, user_id, cluster_id, attempts, created_at FROM delivery
-WHERE status = 'sending' AND created_at < now() - interval '10 minutes';
+SELECT id, user_id, cluster_id, attempts, claimed_at FROM delivery
+WHERE status = 'sending' AND claimed_at < now() - interval '10 minutes';
 
 -- Why deliveries failed.
 SELECT error, count(*) FROM delivery WHERE status = 'failed' GROUP BY error ORDER BY 2 DESC;

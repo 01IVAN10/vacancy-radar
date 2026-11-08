@@ -33,7 +33,6 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("cluster_id", sa.BigInteger(), nullable=False),
-        sa.Column("vacancy_id", sa.BigInteger(), nullable=False),
         sa.Column("status", sa.String(length=8), nullable=False),
         sa.Column("attempts", sa.SmallInteger(), server_default="0", nullable=False),
         sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=False),
@@ -43,6 +42,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
+        sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("telegram_message_id", sa.BigInteger(), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
@@ -65,17 +65,10 @@ def upgrade() -> None:
             name=op.f("fk_delivery_cluster_id_vacancy_cluster"),
             ondelete="RESTRICT",
         ),
-        sa.ForeignKeyConstraint(
-            ["vacancy_id"],
-            ["vacancy.id"],
-            name=op.f("fk_delivery_vacancy_id_vacancy"),
-            ondelete="CASCADE",
-        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_delivery")),
         sa.UniqueConstraint("user_id", "cluster_id", name=op.f("uq_delivery_user_id_cluster_id")),
     )
     op.create_index(op.f("ix_delivery_cluster_id"), "delivery", ["cluster_id"])
-    op.create_index(op.f("ix_delivery_vacancy_id"), "delivery", ["vacancy_id"])
     op.create_index(
         "ix_delivery_pending_next_attempt_at",
         "delivery",

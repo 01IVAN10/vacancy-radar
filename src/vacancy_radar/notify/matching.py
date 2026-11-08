@@ -7,9 +7,10 @@ A cluster is a candidate for a subscription when all of these hold:
   the chat was linked (the watermark), so neither creating a subscription
   nor linking a chat sends what was collected before;
 - it was first seen within `LOOKBACK`, which bounds the work of each run;
-- the vacancy is ready: its salary, if it has one in hryvnias or euros, has
-  been converted to dollars, or `CONVERSION_GRACE` has passed since it was
-  normalized. Otherwise a salary not yet converted would read as no salary;
+- the vacancy is ready: its salary needs no conversion to dollars
+  (`normalize.service.needs_conversion`), or `CONVERSION_GRACE` has passed
+  since it was normalized. Otherwise a salary not yet converted would read
+  as no salary;
 - the subscription has no `notification` for the cluster yet.
 
 The decision itself is `domain.matching.matches`. Each match becomes a
@@ -27,7 +28,7 @@ from datetime import datetime, timedelta
 from itertools import batched
 from typing import Final
 
-from sqlalchemy import Select, and_, exists, func, or_, select, tuple_
+from sqlalchemy import and_, exists, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -41,6 +42,7 @@ from vacancy_radar.db.models import (
 )
 from vacancy_radar.domain.matching import VacancyFacts, matches
 from vacancy_radar.domain.subscriptions import SubscriptionFilter
+from vacancy_radar.normalize.service import needs_conversion
 from vacancy_radar.subscriptions.service import filter_of
 
 LOOKBACK: Final = timedelta(days=2)
@@ -54,7 +56,6 @@ class Match:
     subscription_id: int
     user_id: int
     cluster_id: int
-    vacancy_id: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,7 @@ def match_new(session: Session, *, now: datetime) -> MatchResult:
     Both inserts skip rows that already exist, so a rerun, or two runs at
     once, never records a match or queues a delivery twice.
     """
+    # Read in full before writing: the inserts run on the same session.
     found = list(_matches(session, now=now))
     queued = sum(_queue_deliveries(session, batch, now=now) for batch in batched(found, BATCH_SIZE))
     matched = sum(_record_matches(session, batch) for batch in batched(found, BATCH_SIZE))
@@ -78,48 +80,16 @@ def match_new(session: Session, *, now: datetime) -> MatchResult:
 
 
 def _matches(session: Session, *, now: datetime) -> Iterator[Match]:
-    filters: dict[int, SubscriptionFilter] = {
-        row.id: filter_of(row)
-        for row in session.scalars(
-            select(Subscription)
-            .join(User, User.id == Subscription.user_id)
-            .where(Subscription.is_active, User.telegram_chat_id.is_not(None))
-        )
-    }
-    if not filters:
-        return
-    for row in session.execute(_candidates(now).execution_options(yield_per=BATCH_SIZE)):
-        facts = VacancyFacts.from_stored(
-            skills=row.skills,
-            seniority=row.seniority,
-            work_formats=row.work_formats,
-            salary_usd_min=row.salary_usd_min,
-            salary_usd_max=row.salary_usd_max,
-        )
-        if matches(filters[row.subscription_id], facts):
-            yield Match(row.subscription_id, row.user_id, row.cluster_id, row.vacancy_id)
-
-
-def _candidates(
-    now: datetime,
-) -> Select[int, int, int, int, list[str], list[str], list[str], int | None, int | None]:
+    filters: dict[int, SubscriptionFilter] = {}
     already_matched = exists().where(
         Notification.subscription_id == Subscription.id,
         Notification.cluster_id == VacancyCluster.id,
     )
-    ready = or_(
-        Vacancy.salary_currency.is_(None),
-        Vacancy.salary_period == "hour",
-        Vacancy.salary_usd_min.is_not(None),
-        Vacancy.salary_usd_max.is_not(None),
-        Vacancy.normalized_at <= now - CONVERSION_GRACE,
-    )
-    return (
+    ready = or_(~needs_conversion(), Vacancy.normalized_at <= now - CONVERSION_GRACE)
+    candidates = (
         select(
-            Subscription.id.label("subscription_id"),
-            Subscription.user_id,
+            Subscription,
             VacancyCluster.id.label("cluster_id"),
-            Vacancy.id.label("vacancy_id"),
             Vacancy.skills,
             Vacancy.seniority,
             Vacancy.work_formats,
@@ -139,25 +109,36 @@ def _candidates(
         .where(Subscription.is_active, User.telegram_chat_id.is_not(None), ready, ~already_matched)
         .order_by(VacancyCluster.first_seen_at, Vacancy.id, Subscription.id)
     )
+    for row in session.execute(candidates):
+        subscription = row.Subscription
+        criteria = filters.get(subscription.id)
+        if criteria is None:
+            criteria = filters[subscription.id] = filter_of(subscription)
+        facts = VacancyFacts.from_stored(
+            skills=row.skills,
+            seniority=row.seniority,
+            work_formats=row.work_formats,
+            salary_usd_min=row.salary_usd_min,
+            salary_usd_max=row.salary_usd_max,
+        )
+        if matches(criteria, facts):
+            yield Match(subscription.id, subscription.user_id, row.cluster_id)
 
 
 def _queue_deliveries(session: Session, batch: Sequence[Match], *, now: datetime) -> int:
     """Create the deliveries the batch needs. Returns how many were new."""
-    first_of: dict[tuple[int, int], Match] = {}
-    for match in batch:
-        first_of.setdefault((match.user_id, match.cluster_id), match)
+    pairs = sorted({(match.user_id, match.cluster_id) for match in batch})
     added = session.scalars(
         insert(Delivery)
         .values(
             [
                 {
-                    "user_id": match.user_id,
-                    "cluster_id": match.cluster_id,
-                    "vacancy_id": match.vacancy_id,
+                    "user_id": user_id,
+                    "cluster_id": cluster_id,
                     "status": "pending",
                     "next_attempt_at": now,
                 }
-                for match in first_of.values()
+                for user_id, cluster_id in pairs
             ]
         )
         .on_conflict_do_nothing(index_elements=[Delivery.user_id, Delivery.cluster_id])

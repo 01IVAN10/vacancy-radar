@@ -20,15 +20,16 @@ from vacancy_radar.notify.matching import CONVERSION_GRACE, LOOKBACK, MatchResul
 
 
 def queued(session: Session) -> list[tuple[int, int, int, str]]:
-    """(subscription, cluster, vacancy shown, delivery status) per recorded match."""
+    """(subscription, cluster, vacancy, delivery status) per recorded match."""
     rows = session.execute(
         select(
             Notification.subscription_id,
             Notification.cluster_id,
-            Delivery.vacancy_id,
+            Vacancy.id,
             Delivery.status,
         )
         .join(Delivery, Delivery.id == Notification.delivery_id)
+        .join(Vacancy, Vacancy.cluster_id == Notification.cluster_id)
         .order_by(Notification.id)
     )
     return [(row[0], row[1], row[2], row[3]) for row in rows]
@@ -211,6 +212,29 @@ def test_a_salary_never_converted_is_matched_as_unknown_after_the_grace(
         salary_currency="UAH",
         salary_period="month",
     )
+
+    assert match_new(db_session, now=NOW).queued == 1
+
+
+@pytest.mark.parametrize(
+    "salary",
+    [
+        {},
+        {"salary_min": 4000, "salary_currency": "USD", "salary_period": "month"},
+        {
+            "salary_min": 3500,
+            "salary_currency": "EUR",
+            "salary_period": "month",
+            "salary_usd_min": 3800,
+        },
+    ],
+    ids=["no salary", "dollars", "converted"],
+)
+def test_a_salary_that_needs_no_conversion_does_not_wait(
+    db_session: Session, salary: dict[str, object]
+) -> None:
+    add_subscription(db_session, add_user(db_session))
+    add_clustered_vacancy(db_session, normalized_at=NOW - timedelta(minutes=5), **salary)
 
     assert match_new(db_session, now=NOW).queued == 1
 

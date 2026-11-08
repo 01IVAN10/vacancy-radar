@@ -113,6 +113,13 @@ def _acquire(bucket: TokenBucket, key: str) -> float:
         raise RateLimitError(f"no request token for {key}: {type(exc).__name__}") from exc
 
 
+def rate_limit_hooks(
+    bucket: TokenBucket | None,
+) -> dict[str, list[Callable[[httpx.Request], None]]]:
+    """`event_hooks` for an httpx client: wait for `bucket` before each request, or none."""
+    return {} if bucket is None else {"request": [rate_limit_hook(bucket)]}
+
+
 def rate_limit_hook(bucket: TokenBucket) -> Callable[[httpx.Request], None]:
     """httpx request hook that blocks until `bucket` allows a request to the host."""
 

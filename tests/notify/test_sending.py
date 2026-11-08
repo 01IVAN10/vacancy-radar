@@ -13,7 +13,7 @@ import httpx
 import pytest
 import redis
 import respx
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
 from tests.notify.factories import (
@@ -24,14 +24,17 @@ from tests.notify.factories import (
     add_user,
 )
 from tests.support import fixture_bytes
-from vacancy_radar.db.models import Delivery, User
+from vacancy_radar.db.models import Delivery, User, Vacancy
 from vacancy_radar.notify import sending
 from vacancy_radar.notify.matching import match_new
 from vacancy_radar.notify.outcome import BACKOFF_MAX_SECONDS, MAX_ATTEMPTS, OUTCOME_UNKNOWN
 from vacancy_radar.notify.sending import (
     MAX_DELIVERIES_PER_RUN,
+    NO_VACANCY,
+    STUCK_AFTER,
     SendResult,
     claim_next,
+    count_stuck,
     send_pending,
     sender_lock,
 )
@@ -168,21 +171,14 @@ def test_429_waits_retry_after_and_stops_the_run(
     assert (second.status, second.attempts, second.next_attempt_at) == ("pending", 0, NOW)
 
 
-@pytest.mark.parametrize(
-    "failure",
-    [httpx.Response(502, text="Bad Gateway"), httpx.ConnectError("refused")],
-    ids=["5xx", "no connection"],
-)
-def test_a_failure_that_sent_nothing_waits_a_backoff(
-    db_session: Session,
-    api: respx.MockRouter,
-    client: TelegramClient,
-    failure: httpx.Response | Exception,
+def test_a_request_that_never_left_waits_a_backoff_and_stops_the_run(
+    db_session: Session, api: respx.MockRouter, client: TelegramClient
 ) -> None:
-    api.post("/sendMessage").mock(side_effect=[failure])
+    route = api.post("/sendMessage").mock(side_effect=[httpx.ConnectError("refused")])
     queue_one(db_session)
 
     assert send(db_session, client) == SendResult()
+    assert route.call_count == 1
 
     [row] = deliveries(db_session)
     assert (row.status, row.attempts) == ("pending", 1)
@@ -193,7 +189,7 @@ def test_a_failure_that_sent_nothing_waits_a_backoff(
 def test_fails_after_the_last_attempt(
     db_session: Session, api: respx.MockRouter, client: TelegramClient
 ) -> None:
-    api.post("/sendMessage").mock(return_value=httpx.Response(502, text="Bad Gateway"))
+    api.post("/sendMessage").mock(side_effect=httpx.ConnectError("refused"))
     queue_one(db_session)
     [row] = deliveries(db_session)
     row.attempts = MAX_ATTEMPTS - 1
@@ -202,26 +198,40 @@ def test_fails_after_the_last_attempt(
     assert send(db_session, client) == SendResult(failed=1)
     [row] = deliveries(db_session)
     assert (row.status, row.attempts) == ("failed", MAX_ATTEMPTS)
-    assert row.error == "sendMessage: 502 HTTP 502 without Bot API JSON"
+    assert row.error == "sendMessage: ConnectError"
 
 
 @pytest.mark.parametrize(
-    "error", [httpx.ReadTimeout("timed out"), httpx.RemoteProtocolError("disconnected")]
+    ("failure", "error"),
+    [
+        (httpx.ReadTimeout("timed out"), "sendMessage: ReadTimeout"),
+        (httpx.RemoteProtocolError("disconnected"), "sendMessage: RemoteProtocolError"),
+        (httpx.Response(502, text="Bad Gateway"), "sendMessage: 502 HTTP 502 without Bot API JSON"),
+        (
+            httpx.Response(500, json={"ok": False, "error_code": 500, "description": "Internal"}),
+            "sendMessage: 500 Internal",
+        ),
+    ],
+    ids=["read timeout", "dropped", "gateway 502", "bot api 500"],
 )
-def test_a_request_that_may_have_arrived_is_not_sent_again(
-    db_session: Session, api: respx.MockRouter, client: TelegramClient, error: Exception
+def test_a_request_that_may_have_arrived_is_never_sent_again(
+    db_session: Session,
+    api: respx.MockRouter,
+    client: TelegramClient,
+    failure: httpx.Response | Exception,
+    error: str,
 ) -> None:
-    route = api.post("/sendMessage").mock(side_effect=[error, reply("send_message")])
+    route = api.post("/sendMessage").mock(side_effect=[failure, reply("send_message")])
     queue_two_accounts(db_session)
 
-    # The run goes on with the next delivery.
-    assert send(db_session, client) == SendResult(sent=1, failed=1)
+    # The run stops: Telegram may be failing for everyone.
+    assert send(db_session, client) == SendResult(failed=1)
+    assert send(db_session, client) == SendResult(sent=1)
     assert send(db_session, client) == SendResult()
 
     assert route.call_count == 2
     first, second = deliveries(db_session)
-    assert first.status == "failed"
-    assert first.error == f"{OUTCOME_UNKNOWN}: sendMessage: {type(error).__name__}"
+    assert (first.status, first.error) == ("failed", f"{OUTCOME_UNKNOWN}: {error}")
     assert second.status == "sent"
 
 
@@ -312,6 +322,41 @@ def test_an_error_of_ours_before_the_request_puts_the_delivery_back_and_raises(
     assert row.error == "KeyError: 'oops'"
 
 
+def test_the_message_shows_a_vacancy_the_cluster_still_has(
+    db_session: Session, api: respx.MockRouter, client: TelegramClient
+) -> None:
+    route = api.post("/sendMessage").mock(return_value=reply("send_message"))
+    queue_one(db_session)
+    db_session.execute(update(Vacancy).values(title="Renamed Python Developer"))
+
+    assert send(db_session, client) == SendResult(sent=1)
+    assert "<b>Renamed Python Developer</b>" in json.loads(route.calls.last.request.content)["text"]
+
+
+def test_a_cluster_without_vacancies_is_skipped(
+    db_session: Session, api: respx.MockRouter, client: TelegramClient
+) -> None:
+    route = api.post("/sendMessage").mock(return_value=reply("send_message"))
+    queue_one(db_session)
+    db_session.execute(update(Vacancy).values(cluster_id=None))
+
+    assert send(db_session, client) == SendResult(skipped=1)
+    assert not route.called
+    [row] = deliveries(db_session)
+    assert (row.status, row.error) == ("skipped", NO_VACANCY)
+
+
+def test_a_claim_records_when_it_was_made(db_session: Session) -> None:
+    queue_one(db_session)
+
+    claim_next(db_session, now=NOW)
+
+    [row] = deliveries(db_session)
+    assert (row.status, row.claimed_at) == ("sending", NOW)
+    assert count_stuck(db_session, now=NOW + STUCK_AFTER - timedelta(seconds=1)) == 0
+    assert count_stuck(db_session, now=NOW + STUCK_AFTER + timedelta(seconds=1)) == 1
+
+
 def test_a_run_handles_at_most_its_limit(
     db_session: Session, api: respx.MockRouter, client: TelegramClient
 ) -> None:
@@ -336,6 +381,7 @@ def test_a_claim_skips_a_delivery_another_sender_holds(committed_database: Engin
         claim = claim_next(sender, now=NOW)
 
         assert claim is not None
+        assert claim.card is not None
         assert claim.card.title == "Second"
         other.rollback()
         assert claim_next(sender, now=NOW) is not None
