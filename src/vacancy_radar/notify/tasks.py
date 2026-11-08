@@ -13,9 +13,9 @@ from typing import Final
 
 import structlog
 
+from vacancy_radar.clusters.service import assign_clusters
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.engine import get_engine, get_sessionmaker
-from vacancy_radar.notify.clusters import assign_clusters
 from vacancy_radar.notify.matching import match_new
 from vacancy_radar.notify.sending import SendResult, count_stuck, send_pending, sender_lock
 from vacancy_radar.ratelimit import get_rate_limiter

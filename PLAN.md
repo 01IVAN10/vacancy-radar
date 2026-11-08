@@ -113,7 +113,7 @@ Decisions (2026-11-08):
 ## Phase C: Showcase features and production
 
 ### Stage 8: Deduplication
-- [x] Model `vacancy_cluster` (added in stage 7: one vacancy per cluster, set by `notify/clusters.py`; this stage replaces that rule. `notification.cluster_id` is RESTRICT, so merging clusters must decide what happens to their notifications)
+- [x] Model `vacancy_cluster` (added in stage 7: one vacancy per cluster, set by `clusters/service.py`; this stage replaces that rule. `notification.cluster_id` is RESTRICT, so merging clusters must decide what happens to their notifications)
 - [ ] Exact fingerprint (normalized company + title + city)
 - [ ] Fuzzy match: pg_trgm candidates → rapidfuzz scoring, conservative threshold
 - [ ] Cluster assignment task

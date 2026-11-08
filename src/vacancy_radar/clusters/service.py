@@ -1,8 +1,8 @@
 """Which vacancies are the same job. For now, every vacancy is its own cluster.
 
-Notifications are keyed by cluster, not by vacancy, so that a job posted on
-two sources is sent once. Deduplication (stage 8) replaces the rule here;
-everything downstream already works on clusters.
+Everything downstream is keyed by cluster, not by vacancy, so that a job
+posted on two sources is sent and counted once. Deduplication (stage 8)
+replaces the rule here; the code that reads clusters does not change.
 """
 
 from typing import Final
