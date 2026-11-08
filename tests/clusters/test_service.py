@@ -5,10 +5,10 @@ from sqlalchemy.orm import Session
 
 from tests.notify.factories import NOW, add_vacancy
 from tests.support import fixture_bytes
+from vacancy_radar.clusters.service import assign_clusters
 from vacancy_radar.collect.service import ensure_source, upsert_raw_items
 from vacancy_radar.db.models import Vacancy, VacancyCluster
 from vacancy_radar.normalize.service import normalize_pending
-from vacancy_radar.notify.clusters import assign_clusters
 from vacancy_radar.sources import ADAPTERS, djinni
 
 

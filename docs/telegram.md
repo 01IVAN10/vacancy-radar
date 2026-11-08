@@ -94,7 +94,7 @@ flowchart LR
     S --> T[Telegram sendMessage]
 ```
 
-- **`notify.match`** (Beat every 5 minutes) gives every new vacancy a cluster, then records the clusters that match each subscription. Until deduplication (stage 8) every vacancy is a cluster of its own (`notify/clusters.py`). A cluster's `first_seen_at` comes from its raw item, so rebuilding the derived tables never makes old vacancies look new.
+- **`notify.match`** (Beat every 5 minutes) gives every new vacancy a cluster, then records the clusters that match each subscription. Until deduplication (stage 8) every vacancy is a cluster of its own (`clusters/service.py`). A cluster's `first_seen_at` comes from its raw item, so rebuilding the derived tables never makes old vacancies look new.
 - **`notify.send`** (Beat every minute) sends the due deliveries. Requests go through the Redis rate limiter (`ratelimit.py`), one a second to `api.telegram.org`, well inside Telegram's limits (one message a second per chat, 30 a second in all). A run handles at most 50 deliveries, sent, failed or skipped, and only one run sends at a time (a Postgres advisory lock), so a 429 that stops one run is not ignored by another.
 
 ### Matches and deliveries

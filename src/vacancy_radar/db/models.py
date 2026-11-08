@@ -207,7 +207,7 @@ class Vacancy(Base):
     normalizer_version: Mapped[int] = mapped_column(SmallInteger)
     raw_updated_at: Mapped[datetime]
     normalized_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    # Set by `notify.clusters.assign_clusters`, never by normalization, so a
+    # Set by `clusters.service.assign_clusters`, never by normalization, so a
     # rebuilt vacancy keeps its cluster and is not sent again.
     cluster_id: Mapped[int | None] = mapped_column(
         ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
