@@ -1,6 +1,6 @@
 # Telegram
 
-Matches are sent to a Telegram chat linked to the account. This page describes the bot, how a chat is linked, and how the bot token is kept secret. Sending matches comes with notifications, the last part of stage 7.
+Matches are sent to a Telegram chat linked to the account. This page describes the bot, how a chat is linked, how matches are delivered, and how the bot token is kept secret.
 
 ## Setting up a bot
 
@@ -79,6 +79,77 @@ Commands sent as `/start@your_radar_bot` work too. Only private chats get replie
 - **Timeouts.** `getUpdates` sets the read timeout of its own request to the poll's wait plus 10 seconds, so a quiet poll never times out, whatever the client's default. The Bot API has its own HTTP client (`build_http`, 10 seconds), separate from the source adapters' client, whose User-Agent and timeouts are agreed with the sources.
 - **Stopping.** SIGTERM ends the current long poll (at most 20 seconds) and the process exits. Compose gives the service 30 seconds before it kills it.
 
+## Delivery
+
+New vacancies reach subscribers in three steps, all in the Celery worker (`notify/`):
+
+```mermaid
+flowchart LR
+    N[normalize.pending] --> V[(vacancy)]
+    V --> C[assign_clusters]
+    C --> M[match_new]
+    M --> Q[(notification: pending)]
+    Q --> S[send_pending]
+    S --> T[Telegram sendMessage]
+```
+
+- **`notify.match`** (Beat every 5 minutes) gives every new vacancy a cluster, then queues the clusters that match each subscription as `notification` rows, and sends `notify.send` at once if it queued any. Until deduplication (stage 8) every vacancy is a cluster of its own (`notify/clusters.py`). A cluster's `first_seen_at` comes from its raw item, so rebuilding the derived tables never makes old vacancies look new.
+- **`notify.send`** (Beat every 5 minutes as well) delivers the due rows. One message covers every row of one account for one cluster, so a vacancy that matched two subscriptions arrives once and names both. Requests go through the Redis rate limiter, one a second to `api.telegram.org`, well inside Telegram's limits (one message a second per chat, 30 a second in all). A run sends at most 50 messages.
+
+### What is sent
+
+A cluster is queued for a subscription (`notify/matching.py`) when:
+
+| Rule | Why |
+|---|---|
+| the subscription is active and the account has a linked chat | nothing to send to otherwise |
+| the cluster was first seen after both `subscription.active_since` and `app_user.telegram_linked_at` | creating or resuming a subscription, or linking a chat, never sends what was collected before. `active_since` is set on create and on resume, not on edit |
+| it was first seen within the last 2 days (`LOOKBACK`) | bounds each run. A worker that is down for longer skips what came meanwhile |
+| its salary in UAH or EUR is converted, or it was normalized over an hour ago (`CONVERSION_GRACE`) | a salary NBU has not converted yet would read as no salary and fail a minimum |
+| `domain.matching.matches` says yes | see `docs/subscriptions.md`, Matching |
+
+`(subscription_id, cluster_id)` is unique, and the insert skips pairs already queued, so rerunning `notify.match` never queues a cluster twice. A candidate that did not match is looked at again by each run within the lookback.
+
+The message (`notify/message.py`) shows the title, company and cities, the salary as stated, level, format and up to eight skills, with a link to the original posting and the names of the matched subscriptions. It never includes the description. Every value is HTML-escaped.
+
+### At most once
+
+`send_pending` claims a delivery before sending it: its rows become `sending` with one more attempt, and that is committed before the request. While claiming, the account's row is locked with `SKIP LOCKED`, so two workers never split one delivery between them. A worker that dies after the request but before storing the result leaves the rows `sending`, and they are never sent again. A missed message is better than a duplicate, the same trade-off as conservative deduplication.
+
+| Status | Meaning |
+|---|---|
+| `pending` | waits for `next_attempt_at` |
+| `sending` | claimed. Stays so only if the worker died mid-send |
+| `sent` | delivered; `sent_at` and `telegram_message_id` are set |
+| `failed` | given up; `error` says why |
+| `skipped` | the chat was unlinked before sending |
+
+| Failure | Rows become | The run |
+|---|---|---|
+| 429 | `pending` after `retry_after`; the attempt is not counted | stops, and the task retries after `retry_after` |
+| 5xx, no connection | `pending` after a backoff (doubling from 30 s up to 10 min, full jitter); `failed` after 5 attempts | stops, and the task retries after the backoff |
+| a timeout or a dropped connection after the request was sent | `failed`, `outcome unknown: …` | goes on |
+| 403: the user blocked the bot | `failed`, and the chat is unlinked; the account's other rows become `skipped` | goes on |
+| 401: the token was rejected | `pending`; the attempt is not counted. Logged as `telegram.token_rejected` | the task fails without a retry |
+| anything else, such as 400 | `failed` | goes on |
+
+The task retries itself at most 3 times, and only for delays up to 10 minutes; longer waits are left to the next Beat run, and `next_attempt_at` keeps a row from going out early. Without `TELEGRAM_BOT_TOKEN` the task logs `telegram.not_configured` and leaves the rows pending.
+
+### Checking delivery
+
+```sql
+-- Deliveries by status over the last day.
+SELECT status, count(*) FROM notification
+WHERE created_at > now() - interval '1 day' GROUP BY status;
+
+-- Rows a dead worker left claimed: never sent again, check them by hand.
+SELECT id, subscription_id, cluster_id, attempts, created_at FROM notification
+WHERE status = 'sending' AND created_at < now() - interval '10 minutes';
+
+-- Why deliveries failed.
+SELECT error, count(*) FROM notification WHERE status = 'failed' GROUP BY error ORDER BY 2 DESC;
+```
+
 ## Keeping the token secret
 
 The Bot API puts the token in every request URL (`https://api.telegram.org/bot<token>/sendMessage`). Two things keep it out of logs:
@@ -92,7 +163,7 @@ The client classifies every failure once, so callers decide by type, never by er
 
 | Error | When | `retryable` |
 |---|---|---|
-| `TelegramUnavailableError` | no answer: a timeout or a network error | yes |
+| `TelegramUnavailableError` | no answer: a timeout, a network error, or no rate-limit token | yes, but see `maybe_delivered` |
 | `TelegramServerError` | 5xx, from Telegram or from a proxy in front of it, JSON or not | yes |
 | `TelegramRateLimitedError` | 429; `retry_after` says how many seconds to wait (5 if Telegram ever leaves it out) | yes |
 | `TelegramUnauthorizedError` | 401: the token is wrong or was revoked | no |
@@ -101,7 +172,7 @@ The client classifies every failure once, so callers decide by type, never by er
 | `TelegramApiError` | any other `ok: false`, such as 400 "chat not found" | no |
 | `TelegramMalformedError` | an answer not shaped like the Bot API, such as an HTML page with 200 | no |
 
-All of them are `TelegramError`. The `Api` ones carry `error_code` and `description`. An update without an `update_id` is dropped from its batch rather than failing it; Telegram does not send such updates.
+All of them are `TelegramError`. The `Api` ones carry `error_code` and `description`. `TelegramUnavailableError.maybe_delivered` is False only when the request certainly never left: no connection (`ConnectError`, `ConnectTimeout`, `PoolTimeout`) or no rate-limit token. After a read timeout or a dropped connection Telegram may have acted on the request, so a `sendMessage` is not repeated (see Delivery). An update without an `update_id` is dropped from its batch rather than failing it; Telegram does not send such updates.
 
 In settings the token is a `SecretStr`, hidden from `repr(settings)`. The tests never see a real token: `conftest.py` sets `TELEGRAM_BOT_TOKEN` empty and `TELEGRAM_BOT_USERNAME` to a made-up bot before a developer's `.env` could be read.
 

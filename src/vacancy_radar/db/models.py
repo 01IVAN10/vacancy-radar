@@ -10,9 +10,13 @@ official NBU rates that salaries are converted with.
 task whenever the raw item or the parsers change. `skill` mirrors the skill
 dictionary in `domain/skills.py`, so SQL can show skill names.
 
+`vacancy_cluster` groups the vacancies that are one job posted on several
+sources. Until deduplication (stage 8) every vacancy is its own cluster.
+
 `app_user` holds accounts, and `subscription` the filters each account
 wants vacancies sent for. `telegram_link_token` holds the one-time tokens
-that link an account to a Telegram chat. `app_user` is not called `user` because that is a
+that link an account to a Telegram chat, and `notification` the clusters
+matched for each subscription and their delivery. `app_user` is not called `user` because that is a
 reserved word in Postgres: an unquoted `SELECT * FROM user` returns the
 name of the current database role instead of failing.
 """
@@ -34,6 +38,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -200,6 +205,27 @@ class Vacancy(Base):
     normalizer_version: Mapped[int] = mapped_column(SmallInteger)
     raw_updated_at: Mapped[datetime]
     normalized_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # Set by `notify.clusters.assign_clusters`, never by normalization, so a
+    # rebuilt vacancy keeps its cluster and is not sent again.
+    cluster_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
+    )
+
+
+class VacancyCluster(Base):
+    """One job, however many sources posted it.
+
+    `first_seen_at` is the earliest `raw_vacancy.first_seen_at` of its
+    vacancies, not the time the cluster was created. Rebuilding the derived
+    tables from raw data therefore never makes an old vacancy look new, and
+    notifications compare it with when a subscription started.
+    """
+
+    __tablename__ = "vacancy_cluster"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    first_seen_at: Mapped[datetime] = mapped_column(index=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class Skill(Base):
@@ -294,5 +320,55 @@ class Subscription(Base):
     min_salary_usd: Mapped[int | None]
     include_unsalaried: Mapped[bool | None]
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    # When the subscription was created or last resumed. Only clusters first
+    # seen since then are sent, so resuming does not send what came during a pause.
+    active_since: Mapped[datetime] = mapped_column(server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+NOTIFICATION_STATUSES = ("pending", "sending", "sent", "failed", "skipped")
+
+
+class Notification(Base):
+    """A cluster that matched a subscription, and its delivery to Telegram.
+
+    `(subscription_id, cluster_id)` is unique, so matching the same cluster
+    again never queues it twice. `vacancy_id` is the vacancy the message
+    shows. One message covers every row of one account for one cluster.
+
+    Statuses: `pending` waits for `next_attempt_at`; `sending` was claimed
+    right before the request and stays so if the process dies before the
+    result is stored, so it is never sent twice; `sent`; `failed` with
+    `error`; `skipped` when the chat was unlinked before sending.
+    `cluster_id` is RESTRICT: merging clusters (stage 8) must decide what
+    happens to their notifications.
+    """
+
+    __tablename__ = "notification"
+    __table_args__ = (
+        UniqueConstraint("subscription_id", "cluster_id"),
+        CheckConstraint(_one_of("status", NOTIFICATION_STATUSES), name="status"),
+        CheckConstraint("(status = 'sent') = (sent_at IS NOT NULL)", name="sent"),
+        Index(
+            "ix_notification_pending_next_attempt_at",
+            "next_attempt_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(ForeignKey("subscription.id", ondelete="CASCADE"))
+    cluster_id: Mapped[int] = mapped_column(
+        ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
+    )
+    vacancy_id: Mapped[int] = mapped_column(
+        ForeignKey("vacancy.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(8))
+    attempts: Mapped[int] = mapped_column(SmallInteger, server_default="0")
+    next_attempt_at: Mapped[datetime]
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    sent_at: Mapped[datetime | None]
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    error: Mapped[str | None] = mapped_column(Text)

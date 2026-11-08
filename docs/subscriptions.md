@@ -1,6 +1,6 @@
 # Subscriptions
 
-A subscription is a saved filter over normalized vacancies. New vacancies that match an active subscription will be sent to its owner's Telegram (stage 7). Subscriptions are managed at `/subscriptions` after signing in.
+A subscription is a saved filter over normalized vacancies. New vacancies that match an active subscription are sent to its owner's Telegram (`docs/telegram.md`, Delivery). Subscriptions are managed at `/subscriptions` after signing in.
 
 ## Criteria
 
@@ -48,7 +48,7 @@ The CHECKs `salary_complete` and `skills_match_needs_skills` enforce both rules 
 ## Rules and where they are enforced
 
 - **The form** arrives as one `SubscriptionForm` (`domain/subscriptions.py`), the raw values as typed. The pure function `build_subscription` turns it into a canonical `SubscriptionDraft`. It orders values by their dictionaries and refuses unknown values instead of dropping them, since those only come from a tampered form. An invalid form is shown again from the same `SubscriptionForm`, and `SubscriptionForm.of` builds the edit form from a stored filter.
-- **Storage** maps rows to domain filters in one place: `filter_of` and `_write` in `subscriptions/service.py`. The service hands routes `SavedSubscription`s, never ORM rows, and stage 7 reads filters through `filter_of`.
+- **Storage** maps rows to domain filters in one place: `filter_of` and `_write` in `subscriptions/service.py`. The service hands routes `SavedSubscription`s, never ORM rows, and notifications read filters through `filter_of`.
 - **The database** checks the name length (1 to 80), `skills_match` and its canonical form, the seniority and work-format vocabularies, a positive minimum salary, and that the salary columns are set together. Skills have no CHECK, because the dictionary changes and removing a skill must not make stored subscriptions invalid. Such a skill is kept and shown as "no longer tracked". It matches no vacancy, which is safer than dropping it, because dropping could leave a subscription with no criteria at all, matching everything.
 - **Ownership** is part of every query in `subscriptions/service.py` (`WHERE user_id = :user_id`). Another account's subscription id gives 404, exactly like a missing one, so ids reveal nothing.
 - **The limit** of 20 subscriptions per account is checked with the account row locked (`SELECT … FOR UPDATE`), so two requests at once cannot both pass it. At the limit, the list hides "New subscription" and `/subscriptions/new` says so before any form is filled in.

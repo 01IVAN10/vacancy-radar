@@ -145,8 +145,9 @@ def committed_database(
     with migrated_engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE vacancy, skill, exchange_rate, collect_run, raw_vacancy, source, "
-                "subscription, telegram_link_token, app_user RESTART IDENTITY"
+                "TRUNCATE notification, vacancy, vacancy_cluster, skill, exchange_rate, "
+                "collect_run, raw_vacancy, source, subscription, telegram_link_token, app_user "
+                "RESTART IDENTITY"
             )
         )
 

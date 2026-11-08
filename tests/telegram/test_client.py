@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import Iterator
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -10,6 +11,7 @@ import structlog
 from tests.support import fixture_bytes
 from vacancy_radar import __version__
 from vacancy_radar.log import configure_logging
+from vacancy_radar.sources.ratelimit import RateLimitError, TokenBucket
 from vacancy_radar.telegram.client import (
     API_URL,
     DEFAULT_RETRY_AFTER_SECONDS,
@@ -251,6 +253,58 @@ def test_a_transport_failure_raises_unavailable(
     # Not chained: an httpx error can quote the URL, and the URL holds the token.
     assert caught.value.__cause__ is None
     assert caught.value.__suppress_context__
+
+
+@pytest.mark.parametrize(
+    ("error", "maybe_delivered"),
+    [
+        (httpx.ConnectError("refused"), False),
+        (httpx.ConnectTimeout("timed out"), False),
+        (httpx.PoolTimeout("no free connection"), False),
+        (httpx.ReadTimeout("timed out"), True),
+        (httpx.WriteTimeout("timed out"), True),
+        (httpx.ReadError("connection reset"), True),
+        (httpx.RemoteProtocolError("server disconnected"), True),
+    ],
+)
+def test_a_transport_failure_says_whether_the_request_may_have_arrived(
+    api: respx.MockRouter,
+    client: TelegramClient,
+    error: httpx.HTTPError,
+    maybe_delivered: bool,
+) -> None:
+    api.post("/sendMessage").mock(side_effect=error)
+
+    with pytest.raises(TelegramUnavailableError) as caught:
+        client.send_message(123456789, "Hello")
+
+    assert caught.value.maybe_delivered is maybe_delivered
+
+
+def test_requests_wait_for_a_rate_limit_token(api: respx.MockRouter) -> None:
+    hosts: list[str] = []
+    api.post("/getMe").mock(return_value=reply("get_me"))
+
+    with patch("vacancy_radar.sources.http.wait_for_token") as wait:
+        wait.side_effect = lambda _bucket, host: hosts.append(host)
+        with build_http(rate_limiter=Mock(spec=TokenBucket)) as http:
+            TelegramClient(http, TOKEN).get_me()
+
+    assert hosts == ["api.telegram.org"]
+
+
+def test_no_rate_limit_token_means_the_request_was_never_sent(api: respx.MockRouter) -> None:
+    route = api.post("/sendMessage").mock(return_value=reply("send_message"))
+
+    with (
+        patch("vacancy_radar.sources.http.wait_for_token", side_effect=RateLimitError),
+        build_http(rate_limiter=Mock(spec=TokenBucket)) as http,
+        pytest.raises(TelegramUnavailableError) as caught,
+    ):
+        TelegramClient(http, TOKEN).send_message(123456789, "Hello")
+
+    assert not caught.value.maybe_delivered
+    assert not route.called
 
 
 @pytest.fixture
