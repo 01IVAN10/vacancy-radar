@@ -62,6 +62,8 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest --cov
+      - name: Domain coverage ≥ 90% (MVP definition of done)
+        run: uv run coverage report --include='src/vacancy_radar/domain/*' --fail-under=90
 
   docker:
     runs-on: ubuntu-latest
