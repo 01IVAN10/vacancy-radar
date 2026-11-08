@@ -114,6 +114,9 @@ async def toggle_active(
     if row.is_active:
         row.active_since = func.now()
     await session.commit()
+    if row.is_active:
+        # Load the database's time in place of the SQL expression set above.
+        await session.refresh(row, ["active_since"])
     return _saved(row)
 
 

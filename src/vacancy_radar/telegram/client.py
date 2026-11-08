@@ -37,8 +37,7 @@ from typing import Any, Final
 import httpx
 
 from vacancy_radar import __version__
-from vacancy_radar.sources.http import rate_limit_hook
-from vacancy_radar.sources.ratelimit import RateLimitError, TokenBucket
+from vacancy_radar.ratelimit import RateLimitError, TokenBucket, rate_limit_hook
 
 API_URL: Final = "https://api.telegram.org"
 

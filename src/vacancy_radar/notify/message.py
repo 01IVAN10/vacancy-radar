@@ -43,7 +43,13 @@ class VacancyCard:
 
 
 def render_message(card: VacancyCard, subscription_names: Sequence[str], *, site_url: str) -> str:
-    """The HTML text of the message, at most `MAX_MESSAGE_LENGTH` characters."""
+    """The HTML text of the message.
+
+    The subscription names are shortened to keep it within
+    `MAX_MESSAGE_LENGTH`. The rest is kept short by capping the title, the
+    cities and the skills, which is enough for any vacancy seen so far, but
+    an extreme company name could still make it longer.
+    """
     lines = [f"<b>{escape(_shorten(card.title, MAX_TITLE_LENGTH))}</b>"]
     cities = list(card.cities[:MAX_CITIES])
     place = ", ".join([card.company, *cities] if card.company else cities)

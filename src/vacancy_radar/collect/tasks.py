@@ -7,34 +7,23 @@ the source's `min_interval` does not allow.
 """
 
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
 from typing import Any
 
 import structlog
 from celery import Task
-from redis import Redis
 
 from vacancy_radar.collect.retry import is_blocked, retry_delay
 from vacancy_radar.collect.service import CollectError, CollectOutcome, collect_if_due, describe
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.engine import get_sessionmaker
+from vacancy_radar.ratelimit import get_rate_limiter
 from vacancy_radar.sources import ADAPTERS, SourceAdapter
 from vacancy_radar.sources.http import build_client
-from vacancy_radar.sources.ratelimit import TokenBucket
 from vacancy_radar.worker import COLLECT_EXPIRES_SECONDS, celery_app
 
 logger = structlog.get_logger("vacancy_radar.collect")
 
 FETCH_SOURCE = "collect.fetch_source"
-
-
-@lru_cache
-def get_rate_limiter() -> TokenBucket:
-    """Process-wide token bucket on the Celery Redis."""
-    redis_url = get_settings().redis_url
-    if redis_url is None:
-        raise RuntimeError("REDIS_URL is required for the rate limiter")
-    return TokenBucket(Redis.from_url(str(redis_url)))
 
 
 def collect(adapter: SourceAdapter, *, retry_of: int | None) -> CollectOutcome:

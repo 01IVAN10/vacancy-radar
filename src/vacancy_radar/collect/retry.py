@@ -10,7 +10,7 @@ not fix themselves on a retry.
 import httpx
 from celery.utils.time import get_exponential_backoff_interval
 
-from vacancy_radar.sources.ratelimit import RateLimitError
+from vacancy_radar.ratelimit import RateLimitError
 
 # Backoff doubles from 30 s, capped at 10 min, and full jitter picks a random
 # delay below it. Retries stay well inside Redis's visibility timeout (1 h),

@@ -1,9 +1,11 @@
+from unittest.mock import Mock
+
 import pytest
 import redis
 import respx
 
+from vacancy_radar.ratelimit import KEY_PREFIX, RateLimitError, TokenBucket, wait_for_token
 from vacancy_radar.sources.http import build_client
-from vacancy_radar.sources.ratelimit import KEY_PREFIX, RateLimitError, TokenBucket, wait_for_token
 
 
 class FakeClock:
@@ -132,3 +134,11 @@ def test_client_does_not_send_a_request_it_has_no_token_for(
 def test_client_without_a_rate_limiter_has_no_hooks() -> None:
     with build_client() as client:
         assert client.event_hooks["request"] == []
+
+
+def test_a_redis_failure_means_no_token(redis_client: redis.Redis) -> None:
+    broken = TokenBucket(redis_client)
+    broken._acquire = Mock(side_effect=redis.ConnectionError("Connection refused"))
+
+    with pytest.raises(RateLimitError, match="ConnectionError"):
+        wait_for_token(broken, "api.telegram.org")

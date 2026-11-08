@@ -1,66 +1,50 @@
-"""Deliver queued notifications to Telegram, at most once each.
-
-A delivery is every `pending` row of one account for one cluster: a vacancy
-that matched two subscriptions arrives as one message naming both.
+"""Send due deliveries to Telegram, at most once each.
 
 **At most once.** A delivery is claimed (`sending`, one more attempt) and
-committed before the request. A process that dies between the request and
-storing its result leaves the rows `sending`, and they are never sent again.
-For the same reason a request that may have reached Telegram before the
-connection failed is not retried: a missed message is better than a
-duplicate. Only failures that certainly sent nothing are retried.
+committed before the request. A worker that dies between the request and
+storing its result leaves it `sending`, and it is never sent again. What a
+failed send means is decided by `notify.outcome.outcome_of`; this module only
+applies it.
 
-| Failure | Rows become | The run |
-|---|---|---|
-| 429 | `pending` after `retry_after`; the attempt is not counted | stops |
-| 5xx, no connection | `pending` after a backoff; `failed` after `MAX_ATTEMPTS` | stops |
-| a timeout after the request was sent | `failed`, "outcome unknown" | goes on |
-| 403: the bot was blocked | `failed`, and the chat is unlinked | goes on |
-| 401: the token was rejected | `pending`; the attempt is not counted | raises |
-| any other error | `failed` | goes on |
+**One sender at a time.** `sender_lock` holds a Postgres advisory lock for a
+whole run, so a 429 that stops one run is not ignored by another running
+beside it. Claims also use SKIP LOCKED, so even two senders would never take
+the same delivery.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
 import structlog
-from celery.utils.time import get_exponential_backoff_interval
-from sqlalchemy import select, update
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
-from vacancy_radar.db.models import Notification, Source, Subscription, User, Vacancy
+from vacancy_radar.db.models import Delivery, Notification, Source, Subscription, User, Vacancy
+from vacancy_radar.domain.delivery import DeliveryStatus
 from vacancy_radar.notify.message import VacancyCard, render_message
-from vacancy_radar.telegram.client import (
-    TelegramClient,
-    TelegramError,
-    TelegramForbiddenError,
-    TelegramRateLimitedError,
-    TelegramServerError,
-    TelegramUnauthorizedError,
-    TelegramUnavailableError,
-)
+from vacancy_radar.notify.outcome import Outcome, outcome_of
+from vacancy_radar.telegram.client import TelegramClient
 from vacancy_radar.telegram.linking import unlink_chat
 
 logger = structlog.get_logger("vacancy_radar.notify")
 
-# A run sends at most this many messages; the next run picks up the rest.
-# At one request a second, a full run takes under a minute.
+# A run handles at most this many deliveries (sent, failed or skipped); the
+# next run picks up the rest. At one request a second it fits in a minute,
+# the interval Beat sends `notify.send` at.
 MAX_DELIVERIES_PER_RUN: Final = 50
-MAX_ATTEMPTS: Final = 5
-# Backoff doubles from 30 s, capped at 10 min, with full jitter.
-BACKOFF_FACTOR_SECONDS: Final = 30
-BACKOFF_MAX_SECONDS: Final = 600
 
-OUTCOME_UNKNOWN: Final = "outcome unknown"
+# First key of the two-key advisory lock; collection uses 1.
+NOTIFY_LOCK_NAMESPACE: Final = 2
 
 
 @dataclass(frozen=True, slots=True)
-class Delivery:
-    """One claimed message: the rows it covers and what it shows."""
+class ClaimedDelivery:
+    """A delivery claimed for sending, with what its message shows."""
 
-    notification_ids: tuple[int, ...]
+    id: int
     attempts: int
     chat_id: int | None
     card: VacancyCard
@@ -72,8 +56,26 @@ class SendResult:
     sent: int = 0
     failed: int = 0
     skipped: int = 0
-    # Set when the run stopped early: seconds until a retry is worth it.
-    retry_in: int | None = None
+
+
+@contextmanager
+def sender_lock(engine: Engine) -> Iterator[bool]:
+    """Yield True if this process may send now, holding the lock until the block ends.
+
+    The lock lives on a connection of its own, because the sending session
+    commits, and a session-level lock must be released on the connection
+    that took it.
+    """
+    with engine.connect() as connection:
+        locked = bool(
+            connection.scalar(select(func.pg_try_advisory_lock(NOTIFY_LOCK_NAMESPACE, 0)))
+        )
+        try:
+            yield locked
+        finally:
+            if locked:
+                connection.scalar(select(func.pg_advisory_unlock(NOTIFY_LOCK_NAMESPACE, 0)))
+            connection.rollback()
 
 
 def send_pending(
@@ -84,101 +86,65 @@ def send_pending(
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     limit: int = MAX_DELIVERIES_PER_RUN,
 ) -> SendResult:
-    """Send due deliveries one by one until none is left, `limit` is reached or Telegram says stop.
+    """Send due deliveries one by one, until none is due, `limit` is reached or the run stops.
 
-    Commits after every claim and every result. Raises
-    `TelegramUnauthorizedError` after putting the claimed rows back.
+    Commits after every claim and every result. Re-raises the exceptions
+    `outcome_of` says to, after storing the delivery's outcome.
     """
     sent = failed = skipped = 0
     for _ in range(limit):
-        delivery = claim_next(session, now=clock())
-        if delivery is None:
+        claim = claim_next(session, now=clock())
+        if claim is None:
             break
-        if delivery.chat_id is None:
-            _finish(session, delivery, status="skipped")
+        if claim.chat_id is None:
+            _store(session, claim.id, status="skipped")
             skipped += 1
             continue
-        html = render_message(delivery.card, delivery.subscription_names, site_url=site_url)
         try:
-            message_id = client.send_message(delivery.chat_id, html)
-        except TelegramRateLimitedError as exc:
-            _release(session, delivery, after=exc.retry_after, now=clock(), count_attempt=False)
-            return SendResult(sent, failed, skipped, retry_in=exc.retry_after)
-        except TelegramUnauthorizedError:
-            _release(session, delivery, after=0, now=clock(), count_attempt=False)
-            raise
-        except (TelegramServerError, TelegramUnavailableError) as exc:
-            if isinstance(exc, TelegramUnavailableError) and exc.maybe_delivered:
-                _finish(session, delivery, status="failed", error=f"{OUTCOME_UNKNOWN}: {exc}")
-                failed += 1
-                continue
-            retry_in = _retry_later(session, delivery, exc, now=clock())
-            if retry_in is not None:
-                return SendResult(sent, failed, skipped, retry_in=retry_in)
-            failed += 1
-        except TelegramForbiddenError as exc:
-            _finish(session, delivery, status="failed", error=str(exc))
-            unlink_chat(session, delivery.chat_id)
-            logger.warning("notify.chat_unlinked", reason=str(exc))
-            failed += 1
-        except TelegramError as exc:
-            _finish(session, delivery, status="failed", error=str(exc))
-            failed += 1
-        else:
-            _finish(session, delivery, status="sent", sent_at=clock(), message_id=message_id)
-            sent += 1
+            html = render_message(claim.card, claim.subscription_names, site_url=site_url)
+            message_id = client.send_message(claim.chat_id, html)
+        except Exception as exc:
+            outcome = outcome_of(exc, attempts=claim.attempts)
+            _apply(session, claim, outcome, now=clock())
+            failed += outcome.status == "failed"
+            if outcome.reraise:
+                raise
+            if outcome.stop_run:
+                break
+            continue
+        _store(session, claim.id, status="sent", sent_at=clock(), telegram_message_id=message_id)
+        sent += 1
     return SendResult(sent, failed, skipped)
 
 
-def claim_next(session: Session, *, now: datetime) -> Delivery | None:
-    """Claim the next due delivery and commit, or return None when nothing is due.
-
-    The account's row is locked while claiming, with SKIP LOCKED, so two
-    senders never split one delivery between them: whoever locks the
-    account claims every pending row it has for that cluster.
-    """
-    due = session.execute(
-        select(Subscription.user_id, Notification.cluster_id)
-        .join(Subscription, Subscription.id == Notification.subscription_id)
-        .join(User, User.id == Subscription.user_id)
-        .where(Notification.status == "pending", Notification.next_attempt_at <= now)
-        .order_by(Notification.next_attempt_at, Notification.id)
+def claim_next(session: Session, *, now: datetime) -> ClaimedDelivery | None:
+    """Claim the next due delivery and commit, or return None when nothing is due."""
+    delivery_id = session.scalar(
+        select(Delivery.id)
+        .where(Delivery.status == "pending", Delivery.next_attempt_at <= now)
+        .order_by(Delivery.next_attempt_at, Delivery.id)
         .limit(1)
-        .with_for_update(of=User, skip_locked=True)
-    ).first()
-    if due is None:
+        .with_for_update(skip_locked=True)
+    )
+    if delivery_id is None:
         session.rollback()
         return None
-    user_id, cluster_id = due
-
-    claimed = session.execute(
-        update(Notification)
-        .where(
-            Notification.status == "pending",
-            Notification.cluster_id == cluster_id,
-            Notification.subscription_id.in_(
-                select(Subscription.id).where(Subscription.user_id == user_id)
-            ),
-        )
-        .values(status="sending", attempts=Notification.attempts + 1)
-        .returning(Notification.id, Notification.vacancy_id, Notification.attempts)
-    ).all()
+    attempts, user_id, vacancy_id = session.execute(
+        update(Delivery)
+        .where(Delivery.id == delivery_id)
+        .values(status="sending", attempts=Delivery.attempts + 1)
+        .returning(Delivery.attempts, Delivery.user_id, Delivery.vacancy_id)
+    ).one()
     names = session.scalars(
         select(Subscription.name)
         .join(Notification, Notification.subscription_id == Subscription.id)
-        .where(Notification.id.in_([row.id for row in claimed]))
+        .where(Notification.delivery_id == delivery_id)
         .order_by(Subscription.name)
     ).all()
     chat_id = session.scalar(select(User.telegram_chat_id).where(User.id == user_id))
-    card = _card(session, min(row.vacancy_id for row in claimed))
+    card = _card(session, vacancy_id)
     session.commit()
-    return Delivery(
-        notification_ids=tuple(row.id for row in claimed),
-        attempts=max(row.attempts for row in claimed),
-        chat_id=chat_id,
-        card=card,
-        subscription_names=tuple(names),
-    )
+    return ClaimedDelivery(delivery_id, attempts, chat_id, card, tuple(names))
 
 
 def _card(session: Session, vacancy_id: int) -> VacancyCard:
@@ -203,68 +169,32 @@ def _card(session: Session, vacancy_id: int) -> VacancyCard:
     )
 
 
-def _retry_later(
-    session: Session, delivery: Delivery, exc: TelegramError, *, now: datetime
-) -> int | None:
-    """Put a delivery that certainly was not sent back with a backoff.
-
-    Returns the delay, or None when it has used up its attempts and failed.
-    """
-    if delivery.attempts >= MAX_ATTEMPTS:
-        _finish(session, delivery, status="failed", error=str(exc))
-        return None
-    delay = backoff_seconds(delivery.attempts)
-    _release(session, delivery, after=delay, now=now, count_attempt=True)
-    return delay
-
-
-def backoff_seconds(attempts: int) -> int:
-    """Delay before the next attempt after `attempts` failed ones: full jitter, at least 1 s."""
-    return max(
-        1,
-        get_exponential_backoff_interval(
-            factor=BACKOFF_FACTOR_SECONDS,
-            retries=attempts - 1,
-            maximum=BACKOFF_MAX_SECONDS,
-            full_jitter=True,
-        ),
+def _apply(session: Session, claim: ClaimedDelivery, outcome: Outcome, *, now: datetime) -> None:
+    logger.warning(
+        "notify.send_failed",
+        delivery=claim.id,
+        status=outcome.status,
+        retry_in=outcome.retry_in if outcome.status == "pending" else None,
+        error=outcome.error,
     )
+    if outcome.unlink_chat and claim.chat_id is not None:
+        unlink_chat(session, claim.chat_id)
+        logger.warning("notify.chat_unlinked", delivery=claim.id, reason=outcome.error)
+    if outcome.status == "pending":
+        _store(
+            session,
+            claim.id,
+            status="pending",
+            error=outcome.error,
+            next_attempt_at=now + timedelta(seconds=outcome.retry_in),
+            attempts=Delivery.attempts if outcome.count_attempt else Delivery.attempts - 1,
+        )
+    else:
+        _store(session, claim.id, status="failed", error=outcome.error)
 
 
-def _release(
-    session: Session, delivery: Delivery, *, after: int, now: datetime, count_attempt: bool
-) -> None:
-    attempts = Notification.attempts if count_attempt else Notification.attempts - 1
-    _update(
-        session,
-        delivery.notification_ids,
-        status="pending",
-        attempts=attempts,
-        next_attempt_at=now + timedelta(seconds=after),
+def _store(session: Session, delivery_id: int, *, status: DeliveryStatus, **values: object) -> None:
+    session.execute(
+        update(Delivery).where(Delivery.id == delivery_id).values(status=status, **values)
     )
-
-
-def _finish(
-    session: Session,
-    delivery: Delivery,
-    *,
-    status: str,
-    error: str | None = None,
-    sent_at: datetime | None = None,
-    message_id: int | None = None,
-) -> None:
-    if status == "failed":
-        logger.warning("notify.failed", notifications=delivery.notification_ids, error=error)
-    _update(
-        session,
-        delivery.notification_ids,
-        status=status,
-        error=error,
-        sent_at=sent_at,
-        telegram_message_id=message_id,
-    )
-
-
-def _update(session: Session, ids: Sequence[int], **values: object) -> None:
-    session.execute(update(Notification).where(Notification.id.in_(ids)).values(**values))
     session.commit()

@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import httpx
 
-from vacancy_radar.sources.ratelimit import TokenBucket, wait_for_token
+from vacancy_radar.ratelimit import TokenBucket, rate_limit_hook
 
 # The exact string agreed with DOU when it consented to collection: changing
 # it, the version included, means telling DOU (see docs/sources.md).
@@ -23,12 +23,3 @@ def build_client(rate_limiter: TokenBucket | None = None) -> httpx.Client:
     if rate_limiter is not None:
         hooks["request"] = [rate_limit_hook(rate_limiter)]
     return httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT, event_hooks=hooks)
-
-
-def rate_limit_hook(bucket: TokenBucket) -> Callable[[httpx.Request], None]:
-    """httpx request hook that blocks until `bucket` allows a request to the host."""
-
-    def hook(request: httpx.Request) -> None:
-        wait_for_token(bucket, request.url.host)
-
-    return hook

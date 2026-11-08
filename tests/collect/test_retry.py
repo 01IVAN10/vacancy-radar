@@ -10,8 +10,8 @@ from vacancy_radar.collect.retry import (
     retry_after_seconds,
     retry_delay,
 )
+from vacancy_radar.ratelimit import RateLimitError
 from vacancy_radar.sources.base import FeedError
-from vacancy_radar.sources.ratelimit import RateLimitError
 
 REQUEST = httpx.Request("GET", "https://djinni.co/jobs/rss/")
 

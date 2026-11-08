@@ -15,8 +15,9 @@ sources. Until deduplication (stage 8) every vacancy is its own cluster.
 
 `app_user` holds accounts, and `subscription` the filters each account
 wants vacancies sent for. `telegram_link_token` holds the one-time tokens
-that link an account to a Telegram chat, and `notification` the clusters
-matched for each subscription and their delivery. `app_user` is not called `user` because that is a
+that link an account to a Telegram chat. `notification` records the clusters
+each subscription matched, and `delivery` the one message per account and
+cluster that tells about them. `app_user` is not called `user` because that is a
 reserved word in Postgres: an unquoted `SELECT * FROM user` returns the
 name of the current database role instead of failing.
 """
@@ -45,6 +46,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vacancy_radar.db.base import Base
+from vacancy_radar.domain.delivery import DELIVERY_STATUSES, DeliveryStatus
 from vacancy_radar.domain.seniority import LEVELS
 from vacancy_radar.domain.subscriptions import MAX_NAME_LENGTH, SKILLS_MATCHES
 from vacancy_radar.domain.work_format import WORK_FORMATS
@@ -327,48 +329,62 @@ class Subscription(Base):
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
 
-NOTIFICATION_STATUSES = ("pending", "sending", "sent", "failed", "skipped")
+class Delivery(Base):
+    """One Telegram message about one cluster to one account; see `domain/delivery.py`.
 
-
-class Notification(Base):
-    """A cluster that matched a subscription, and its delivery to Telegram.
-
-    `(subscription_id, cluster_id)` is unique, so matching the same cluster
-    again never queues it twice. `vacancy_id` is the vacancy the message
-    shows. One message covers every row of one account for one cluster.
-
-    Statuses: `pending` waits for `next_attempt_at`; `sending` was claimed
-    right before the request and stays so if the process dies before the
-    result is stored, so it is never sent twice; `sent`; `failed` with
-    `error`; `skipped` when the chat was unlinked before sending.
-    `cluster_id` is RESTRICT: merging clusters (stage 8) must decide what
-    happens to their notifications.
+    `(user_id, cluster_id)` is unique, so the database, not timing, keeps a
+    cluster from reaching the same chat twice: a subscription that matches
+    later joins the existing delivery instead of making a new one.
+    `vacancy_id` is the vacancy the message shows. `cluster_id` is RESTRICT:
+    merging clusters (stage 8) must decide what happens to their deliveries.
     """
 
-    __tablename__ = "notification"
+    __tablename__ = "delivery"
     __table_args__ = (
-        UniqueConstraint("subscription_id", "cluster_id"),
-        CheckConstraint(_one_of("status", NOTIFICATION_STATUSES), name="status"),
+        UniqueConstraint("user_id", "cluster_id"),
+        CheckConstraint(_one_of("status", DELIVERY_STATUSES), name="status"),
         CheckConstraint("(status = 'sent') = (sent_at IS NOT NULL)", name="sent"),
         Index(
-            "ix_notification_pending_next_attempt_at",
+            "ix_delivery_pending_next_attempt_at",
             "next_attempt_at",
             postgresql_where=text("status = 'pending'"),
         ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    subscription_id: Mapped[int] = mapped_column(ForeignKey("subscription.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
     cluster_id: Mapped[int] = mapped_column(
         ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
     )
     vacancy_id: Mapped[int] = mapped_column(
         ForeignKey("vacancy.id", ondelete="CASCADE"), index=True
     )
-    status: Mapped[str] = mapped_column(String(8))
+    status: Mapped[DeliveryStatus] = mapped_column(String(8))
     attempts: Mapped[int] = mapped_column(SmallInteger, server_default="0")
     next_attempt_at: Mapped[datetime]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     sent_at: Mapped[datetime | None]
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class Notification(Base):
+    """A cluster that matched a subscription, and the delivery that tells its account.
+
+    `(subscription_id, cluster_id)` is unique, so matching the same cluster
+    again records nothing new. Its delivery's message names every
+    subscription matched by the time it is sent.
+    """
+
+    __tablename__ = "notification"
+    __table_args__ = (UniqueConstraint("subscription_id", "cluster_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(ForeignKey("subscription.id", ondelete="CASCADE"))
+    cluster_id: Mapped[int] = mapped_column(
+        ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
+    )
+    delivery_id: Mapped[int] = mapped_column(
+        ForeignKey("delivery.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

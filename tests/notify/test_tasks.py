@@ -1,16 +1,11 @@
-"""The notification tasks, run in-process with `apply()`, against the test database.
-
-`apply()` runs retries at once, ignoring their countdown.
-"""
+"""The notification tasks, run in-process with `apply()`, against the test database."""
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from unittest.mock import Mock
 
 import pytest
 import redis
 import respx
-from celery.exceptions import Retry
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 from structlog.testing import capture_logs
@@ -18,15 +13,15 @@ from structlog.testing import capture_logs
 from tests.notify.factories import add_subscription, add_user, add_vacancy
 from tests.support import fixture_bytes
 from vacancy_radar.config import get_settings
-from vacancy_radar.db.models import Notification
+from vacancy_radar.db.models import Delivery
 from vacancy_radar.notify import tasks
-from vacancy_radar.notify.sending import SendResult
-from vacancy_radar.notify.tasks import RETRY_CAP_SECONDS, match_task, retry_expires, send_task
-from vacancy_radar.sources.ratelimit import TokenBucket
+from vacancy_radar.notify.sending import sender_lock
+from vacancy_radar.notify.tasks import match_task, send_task
+from vacancy_radar.ratelimit import TokenBucket
 from vacancy_radar.telegram.client import API_URL
-from vacancy_radar.worker import NOTIFY_EXPIRES_SECONDS
 
 TOKEN = "7000000001:AAtest-token"
+NOTHING_SENT = {"sent": 0, "failed": 0, "skipped": 0}
 
 
 @pytest.fixture(autouse=True)
@@ -47,14 +42,6 @@ def api() -> Iterator[respx.MockRouter]:
         yield router
 
 
-@pytest.fixture
-def queued_send(monkeypatch: pytest.MonkeyPatch) -> Mock:
-    """`notify.send` as `notify.match` queues it, without a broker."""
-    delay = Mock()
-    monkeypatch.setattr(send_task, "delay", delay)
-    return delay
-
-
 def seed(engine: Engine) -> None:
     """A linked account with a subscription, and a vacancy it matches, seen just now."""
     now = datetime.now(UTC)
@@ -67,33 +54,22 @@ def seed(engine: Engine) -> None:
 
 def statuses(engine: Engine) -> list[str]:
     with engine.connect() as connection:
-        return list(connection.scalars(select(Notification.status).order_by(Notification.id)))
+        return list(connection.scalars(select(Delivery.status).order_by(Delivery.id)))
 
 
-def test_match_clusters_queues_and_sends(committed_database: Engine, queued_send: Mock) -> None:
+def test_match_clusters_and_queues(committed_database: Engine) -> None:
     seed(committed_database)
 
-    result = match_task.apply()
+    first = match_task.apply()
+    second = match_task.apply()
 
-    assert result.successful(), result.result
-    assert result.result == {"clustered": 1, "queued": 1}
+    assert first.successful(), first.result
+    assert first.result == {"clustered": 1, "matched": 1, "queued": 1}
+    assert second.result == {"clustered": 0, "matched": 0, "queued": 0}
     assert statuses(committed_database) == ["pending"]
-    queued_send.assert_called_once_with()
 
 
-def test_match_with_nothing_new_sends_nothing(
-    committed_database: Engine, queued_send: Mock
-) -> None:
-    seed(committed_database)
-    match_task.apply()
-
-    assert match_task.apply().result == {"clustered": 0, "queued": 0}
-    assert queued_send.call_count == 1
-
-
-def test_send_delivers_once(
-    committed_database: Engine, api: respx.MockRouter, queued_send: Mock
-) -> None:
+def test_send_delivers_once(committed_database: Engine, api: respx.MockRouter) -> None:
     route = api.post("/sendMessage").respond(
         200, content=fixture_bytes("telegram/send_message.json")
     )
@@ -104,14 +80,14 @@ def test_send_delivers_once(
     second = send_task.apply()
 
     assert first.successful(), first.result
-    assert first.result == {"sent": 1, "failed": 0, "skipped": 0, "retry_in": None}
-    assert second.result == {"sent": 0, "failed": 0, "skipped": 0, "retry_in": None}
+    assert first.result == {**NOTHING_SENT, "sent": 1}
+    assert second.result == NOTHING_SENT
     assert route.call_count == 1
     assert statuses(committed_database) == ["sent"]
 
 
-def test_send_after_429_retries_and_waits_for_retry_after(
-    committed_database: Engine, api: respx.MockRouter, queued_send: Mock
+def test_send_after_429_leaves_the_delivery_for_a_later_run(
+    committed_database: Engine, api: respx.MockRouter
 ) -> None:
     route = api.post("/sendMessage").respond(
         429, content=fixture_bytes("telegram/too_many_requests.json")
@@ -119,39 +95,32 @@ def test_send_after_429_retries_and_waits_for_retry_after(
     seed(committed_database)
     match_task.apply()
 
-    result = send_task.apply()
-
-    # The retry ran at once under apply(), and the row was not due yet.
-    assert result.successful(), result.result
+    assert send_task.apply().result == NOTHING_SENT
+    # No retry of its own: the next run sends once `next_attempt_at` has come.
+    assert send_task.apply().result == NOTHING_SENT
     assert route.call_count == 1
     assert statuses(committed_database) == ["pending"]
 
 
-def test_send_retries_with_the_delay_it_was_given(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tasks, "send_pending", lambda *_, **__: SendResult(retry_in=17))
-    retry = Mock(side_effect=Retry())
-    monkeypatch.setattr(send_task, "retry", retry)
-
-    send_task.apply()
-
-    assert retry.call_args.kwargs["countdown"] == 17
-
-
-def test_send_leaves_a_long_wait_to_beat(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        tasks, "send_pending", lambda *_, **__: SendResult(retry_in=RETRY_CAP_SECONDS + 1)
+def test_send_waits_for_a_run_already_sending(
+    committed_database: Engine, api: respx.MockRouter
+) -> None:
+    route = api.post("/sendMessage").respond(
+        200, content=fixture_bytes("telegram/send_message.json")
     )
-    retry = Mock(side_effect=Retry())
-    monkeypatch.setattr(send_task, "retry", retry)
+    seed(committed_database)
+    match_task.apply()
 
-    result = send_task.apply()
+    with sender_lock(committed_database), capture_logs() as logs:
+        result = send_task.apply()
 
-    assert result.successful()
-    assert not retry.called
+    assert result.result == NOTHING_SENT
+    assert not route.called
+    assert "notify.send_busy" in [log["event"] for log in logs]
 
 
 def test_send_without_a_token_sends_nothing(
-    committed_database: Engine, api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
+    api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     get_settings.cache_clear()
@@ -160,13 +129,13 @@ def test_send_without_a_token_sends_nothing(
     with capture_logs() as logs:
         result = send_task.apply()
 
-    assert result.successful()
+    assert result.result == NOTHING_SENT
     assert not route.called
     assert [log["event"] for log in logs] == ["telegram.not_configured"]
 
 
-def test_send_with_a_rejected_token_fails_without_retrying(
-    committed_database: Engine, api: respx.MockRouter, queued_send: Mock
+def test_send_with_a_rejected_token_fails(
+    committed_database: Engine, api: respx.MockRouter
 ) -> None:
     route = api.post("/sendMessage").respond(
         401, content=fixture_bytes("telegram/unauthorized.json")
@@ -184,15 +153,12 @@ def test_send_with_a_rejected_token_fails_without_retrying(
 
 
 def test_send_goes_through_the_rate_limiter(
-    committed_database: Engine,
-    api: respx.MockRouter,
-    queued_send: Mock,
-    monkeypatch: pytest.MonkeyPatch,
+    committed_database: Engine, api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     api.post("/sendMessage").respond(200, content=fixture_bytes("telegram/send_message.json"))
     hosts: list[str] = []
     monkeypatch.setattr(
-        "vacancy_radar.sources.http.wait_for_token", lambda _bucket, host: hosts.append(host)
+        "vacancy_radar.ratelimit.wait_for_token", lambda _bucket, host: hosts.append(host)
     )
     seed(committed_database)
     match_task.apply()
@@ -200,12 +166,3 @@ def test_send_goes_through_the_rate_limiter(
     send_task.apply()
 
     assert hosts == ["api.telegram.org"]
-
-
-def test_retry_expires_after_its_countdown() -> None:
-    before = datetime.now(UTC)
-
-    expires = retry_expires(60)
-
-    assert before + timedelta(seconds=60 + NOTIFY_EXPIRES_SECONDS) <= expires
-    assert expires <= datetime.now(UTC) + timedelta(seconds=60 + NOTIFY_EXPIRES_SECONDS)

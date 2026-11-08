@@ -11,7 +11,8 @@ from vacancy_radar.sources import ADAPTERS
 from vacancy_radar.worker import (
     COLLECT_EVERY,
     NORMALIZE_EVERY,
-    NOTIFY_EVERY,
+    NOTIFY_MATCH_EVERY,
+    NOTIFY_SEND_EVERY,
     celery_app,
     create_celery,
     ping,
@@ -53,9 +54,12 @@ def test_beat_sends_the_reprocessing_task() -> None:
 def test_beat_sends_the_notification_tasks() -> None:
     schedule = celery_app.conf.beat_schedule
 
-    for name, task in (("notify-match", NOTIFY_MATCH), ("notify-send", NOTIFY_SEND)):
+    for name, task, every in (
+        ("notify-match", NOTIFY_MATCH, NOTIFY_MATCH_EVERY),
+        ("notify-send", NOTIFY_SEND, NOTIFY_SEND_EVERY),
+    ):
         assert schedule[name]["task"] == task
-        assert schedule[name]["schedule"] == NOTIFY_EVERY
+        assert schedule[name]["schedule"] == every
         assert celery_app.tasks[task].name == task
 
 

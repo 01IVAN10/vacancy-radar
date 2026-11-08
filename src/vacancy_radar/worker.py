@@ -27,11 +27,13 @@ COLLECT_EXPIRES_SECONDS = 240
 # raw items, so most runs find nothing to do and finish at once.
 NORMALIZE_EVERY = timedelta(minutes=10)
 NORMALIZE_EXPIRES_SECONDS = 540
-# How often Beat sends the matching and sending tasks. Matching sends the
-# sending task itself when it queues anything; the scheduled one picks up
-# deliveries that wait for a retry.
-NOTIFY_EVERY = timedelta(minutes=5)
-NOTIFY_EXPIRES_SECONDS = 240
+# Matching runs every few minutes, like reprocessing. Sending runs every
+# minute: it is also how a delivery waiting for a retry is picked up, and one
+# run (at most 50 messages at one a second) fits in that minute.
+NOTIFY_MATCH_EVERY = timedelta(minutes=5)
+NOTIFY_MATCH_EXPIRES_SECONDS = 240
+NOTIFY_SEND_EVERY = timedelta(minutes=1)
+NOTIFY_SEND_EXPIRES_SECONDS = 50
 
 
 def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str, Any]]:
@@ -53,12 +55,16 @@ def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str
         "schedule": NORMALIZE_EVERY,
         "options": {"expires": NORMALIZE_EXPIRES_SECONDS},
     }
-    for name, task in (("notify-match", "notify.match"), ("notify-send", "notify.send")):
-        schedule[name] = {
-            "task": task,
-            "schedule": NOTIFY_EVERY,
-            "options": {"expires": NOTIFY_EXPIRES_SECONDS},
-        }
+    schedule["notify-match"] = {
+        "task": "notify.match",
+        "schedule": NOTIFY_MATCH_EVERY,
+        "options": {"expires": NOTIFY_MATCH_EXPIRES_SECONDS},
+    }
+    schedule["notify-send"] = {
+        "task": "notify.send",
+        "schedule": NOTIFY_SEND_EVERY,
+        "options": {"expires": NOTIFY_SEND_EXPIRES_SECONDS},
+    }
     return schedule
 
 

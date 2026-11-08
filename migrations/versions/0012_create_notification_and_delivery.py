@@ -1,4 +1,4 @@
-"""queue matched clusters per subscription for delivery to Telegram
+"""record subscription matches and deliver one message per account and cluster
 
 Revision ID: 0012
 Revises: 0011
@@ -29,9 +29,9 @@ def upgrade() -> None:
         ),
     )
     op.create_table(
-        "notification",
+        "delivery",
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.Column("subscription_id", sa.BigInteger(), nullable=False),
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("cluster_id", sa.BigInteger(), nullable=False),
         sa.Column("vacancy_id", sa.BigInteger(), nullable=False),
         sa.Column("status", sa.String(length=8), nullable=False),
@@ -48,10 +48,51 @@ def upgrade() -> None:
         sa.Column("error", sa.Text(), nullable=True),
         sa.CheckConstraint(
             "status IN ('pending', 'sending', 'sent', 'failed', 'skipped')",
-            name=op.f("ck_notification_status"),
+            name=op.f("ck_delivery_status"),
         ),
         sa.CheckConstraint(
-            "(status = 'sent') = (sent_at IS NOT NULL)", name=op.f("ck_notification_sent")
+            "(status = 'sent') = (sent_at IS NOT NULL)", name=op.f("ck_delivery_sent")
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["app_user.id"],
+            name=op.f("fk_delivery_user_id_app_user"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["cluster_id"],
+            ["vacancy_cluster.id"],
+            name=op.f("fk_delivery_cluster_id_vacancy_cluster"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["vacancy_id"],
+            ["vacancy.id"],
+            name=op.f("fk_delivery_vacancy_id_vacancy"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_delivery")),
+        sa.UniqueConstraint("user_id", "cluster_id", name=op.f("uq_delivery_user_id_cluster_id")),
+    )
+    op.create_index(op.f("ix_delivery_cluster_id"), "delivery", ["cluster_id"])
+    op.create_index(op.f("ix_delivery_vacancy_id"), "delivery", ["vacancy_id"])
+    op.create_index(
+        "ix_delivery_pending_next_attempt_at",
+        "delivery",
+        ["next_attempt_at"],
+        postgresql_where=sa.text("status = 'pending'"),
+    )
+    op.create_table(
+        "notification",
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("subscription_id", sa.BigInteger(), nullable=False),
+        sa.Column("cluster_id", sa.BigInteger(), nullable=False),
+        sa.Column("delivery_id", sa.BigInteger(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
         sa.ForeignKeyConstraint(
             ["subscription_id"],
@@ -66,9 +107,9 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["vacancy_id"],
-            ["vacancy.id"],
-            name=op.f("fk_notification_vacancy_id_vacancy"),
+            ["delivery_id"],
+            ["delivery.id"],
+            name=op.f("fk_notification_delivery_id_delivery"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_notification")),
@@ -79,15 +120,10 @@ def upgrade() -> None:
         ),
     )
     op.create_index(op.f("ix_notification_cluster_id"), "notification", ["cluster_id"])
-    op.create_index(op.f("ix_notification_vacancy_id"), "notification", ["vacancy_id"])
-    op.create_index(
-        "ix_notification_pending_next_attempt_at",
-        "notification",
-        ["next_attempt_at"],
-        postgresql_where=sa.text("status = 'pending'"),
-    )
+    op.create_index(op.f("ix_notification_delivery_id"), "notification", ["delivery_id"])
 
 
 def downgrade() -> None:
     op.drop_table("notification")
+    op.drop_table("delivery")
     op.drop_column("subscription", "active_since")

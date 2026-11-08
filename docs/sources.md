@@ -17,7 +17,7 @@ Status values: `allowed`, `allowed with conditions`, `pending consent`, `not all
 ## Collection rules (all sources)
 
 - One request per feed per collection cycle. No crawling of individual vacancy pages.
-- At most 1 request per second per domain (Redis token bucket in the Celery worker, `sources/ratelimit.py`). Honour `Retry-After`. Stop and alert on 403/429 instead of retrying aggressively: they are never retried and are logged as `collect.blocked`.
+- At most 1 request per second per domain (Redis token bucket in the Celery worker, `ratelimit.py`). Honour `Retry-After`. Stop and alert on 403/429 instead of retrying aggressively: they are never retried and are logged as `collect.blocked`.
 - Generic project User-Agent, never a browser User-Agent, never a personal email.
 - Never try to get around bot protection (Cloudflare challenges, CAPTCHAs). Being blocked means we are not welcome.
 - Public pages show the title, normalized fields, a short excerpt, and a link to the original. Full descriptions are stored only in `raw_vacancy` for parsing.
