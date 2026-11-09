@@ -215,8 +215,7 @@ def _apply(session: Session, claim: ClaimedDelivery, outcome: Outcome, *, now: d
         case GiveUp(unlink_chat=unlink_chat):
             logger.warning("notify.send_failed", delivery=claim.id, error=outcome.error)
             if unlink_chat and claim.chat_id is not None:
-                forget_chat(session, claim.chat_id)
-                logger.warning("notify.chat_unlinked", delivery=claim.id, reason=outcome.error)
+                forget_chat(session, claim.chat_id, via="blocked")
             session.execute(
                 update(Delivery)
                 .where(Delivery.id == claim.id)

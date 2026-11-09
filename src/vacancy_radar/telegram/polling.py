@@ -86,13 +86,13 @@ def poll_forever(
         except TelegramError as exc:
             failures += 1
             delay = min(MAX_BACKOFF_SECONDS, 2 ** (failures - 1))
-            logger.error(
-                "telegram.poll_conflict"
-                if isinstance(exc, TelegramConflictError)
-                else "telegram.poll_failed",
-                error=str(exc),
-                retry_in=delay,
-            )
+            if isinstance(exc, TelegramConflictError):
+                logger.error("telegram.poll_conflict", error=str(exc), retry_in=delay)
+            elif exc.retryable:
+                # A timeout or a 5xx comes and goes; only a lasting one needs a look.
+                logger.warning("telegram.poll_failed", error=str(exc), retry_in=delay)
+            else:
+                logger.error("telegram.poll_failed", error=str(exc), retry_in=delay)
             pause(delay)
         else:
             failures = 0

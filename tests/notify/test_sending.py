@@ -15,6 +15,7 @@ import redis
 import respx
 from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
 from tests.notify.factories import (
     CHAT_ID,
@@ -248,12 +249,16 @@ def test_a_chat_that_is_gone_is_unlinked(
     queue_one(db_session, user, title="First")
     queue_one(db_session, user, title="Second")
 
-    assert send(db_session, client) == SendResult(failed=1, skipped=1)
+    with capture_logs() as logs:
+        assert send(db_session, client) == SendResult(failed=1, skipped=1)
 
     assert route.call_count == 1
     assert [row.status for row in deliveries(db_session)] == ["failed", "skipped"]
     db_session.refresh(user)
     assert (user.telegram_chat_id, user.telegram_linked_at) == (None, None)
+    assert [(log["user"], log["via"]) for log in logs if log["event"] == "telegram.unlinked"] == [
+        (user.id, "blocked")
+    ]
 
 
 def test_a_rejected_token_puts_the_delivery_back_and_raises(
