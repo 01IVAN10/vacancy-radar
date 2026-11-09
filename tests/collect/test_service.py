@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from tests.support import fixture_bytes
 from vacancy_radar.collect.service import (
-    COLLECT_LOCK_NAMESPACE,
     MAX_ERROR_LENGTH,
     CollectError,
     CollectStats,
@@ -25,6 +24,7 @@ from vacancy_radar.collect.service import (
     try_lock_source,
     upsert_raw_items,
 )
+from vacancy_radar.db import locks
 from vacancy_radar.db.models import CollectRun, RawVacancy, Source
 from vacancy_radar.sources.base import FeedError, FetchResult, RawItem
 from vacancy_radar.sources.djinni import parse_feed
@@ -261,9 +261,7 @@ def other_collector(migrated_engine: Engine) -> Iterator[Connection]:
 
 
 def hold_lock(connection: Connection, slug: str) -> None:
-    connection.execute(
-        select(func.pg_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext(slug)))
-    )
+    connection.execute(select(func.pg_advisory_xact_lock(locks.COLLECT, func.hashtext(slug))))
 
 
 def test_collect_if_due_collects_a_due_source(db_session: Session, client: httpx.Client) -> None:
@@ -343,12 +341,12 @@ def test_lock_is_released_when_the_transaction_ends(
     with Session(migrated_engine) as first:
         assert try_lock_source(first, adapter)
         assert not other_collector.scalar(
-            select(func.pg_try_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext("fake")))
+            select(func.pg_try_advisory_xact_lock(locks.COLLECT, func.hashtext("fake")))
         )
         first.rollback()
 
     assert other_collector.scalar(
-        select(func.pg_try_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext("fake")))
+        select(func.pg_try_advisory_xact_lock(locks.COLLECT, func.hashtext("fake")))
     )
 
 

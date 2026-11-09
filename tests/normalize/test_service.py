@@ -2,20 +2,32 @@
 
 from collections.abc import Iterator
 from datetime import timedelta
+from decimal import Decimal
+from itertools import product
+from typing import get_args
 
 import pytest
 import respx
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from tests.notify.factories import add_vacancy
 from tests.support import fixture_bytes
 from vacancy_radar.collect.service import ensure_source, upsert_raw_items
 from vacancy_radar.db.models import RawVacancy, Skill, Source, Vacancy
+from vacancy_radar.domain.money import RateCurrency, to_monthly_usd
 from vacancy_radar.domain.normalize import NORMALIZER_VERSION
+from vacancy_radar.domain.salary import Currency, Period, Salary
 from vacancy_radar.domain.skills import SKILLS
 from vacancy_radar.exchange.nbu import RANGE_URL
 from vacancy_radar.normalize import service
-from vacancy_radar.normalize.service import NormalizeStats, convert_salaries, normalize_pending
+from vacancy_radar.normalize.service import (
+    NormalizeStats,
+    convert_salaries,
+    needs_conversion,
+    normalize_pending,
+    usd_columns,
+)
 from vacancy_radar.sources import ADAPTERS, RawItem, djinni, dou
 from vacancy_radar.sources.http import build_client
 
@@ -233,3 +245,55 @@ def test_syncs_the_skill_table_with_the_dictionary(
     slugs = set(db_session.scalars(select(Skill.slug)))
     assert slugs == {skill.slug for skill in SKILLS}
     assert db_session.scalar(select(func.count()).select_from(Skill)) == len(SKILLS)
+
+
+# --- needs_conversion ----------------------------------------------------------------
+
+RATES: dict[RateCurrency, Decimal] = {"USD": Decimal("41.50"), "EUR": Decimal("48.25")}
+# Every currency and period, each as a closed range and as both kinds of open one.
+SALARIES = [
+    Salary(low, high, currency, period)
+    for currency, period, (low, high) in product(
+        get_args(Currency), get_args(Period), [(3000, 4000), (3000, None), (None, 4000)]
+    )
+]
+
+
+def waits_for_conversion(session: Session, vacancy: Vacancy) -> bool:
+    return bool(session.scalar(select(needs_conversion()).where(Vacancy.id == vacancy.id)))
+
+
+@pytest.mark.parametrize("salary", [None, *SALARIES], ids=str)
+def test_needs_conversion_selects_what_conversion_would_fill(
+    db_session: Session, salary: Salary | None
+) -> None:
+    """The SQL predicate agrees with `to_monthly_usd`, which does the converting.
+
+    A vacancy waits exactly when normalization (no rates) left it without
+    dollars and conversion (with rates) would give it some. If the two
+    disagreed, matching would wait for a salary that never gets converted,
+    or count one as unknown before conversion had its chance.
+    """
+    normalized = to_monthly_usd(salary, rates=None) if salary else None
+    converted = to_monthly_usd(salary, RATES) if salary else None
+    vacancy = add_vacancy(
+        db_session,
+        salary_min=salary.min_amount if salary else None,
+        salary_max=salary.max_amount if salary else None,
+        salary_currency=salary.currency if salary else None,
+        salary_period=salary.period if salary else None,
+        salary_usd_min=normalized.min_usd if normalized else None,
+        salary_usd_max=normalized.max_usd if normalized else None,
+    )
+
+    assert waits_for_conversion(db_session, vacancy) is (
+        normalized is None and converted is not None
+    )
+
+    # Once converted, or when there was nothing to convert, it waits no more.
+    db_session.execute(
+        update(Vacancy)
+        .where(Vacancy.id == vacancy.id)
+        .values(**usd_columns(converted or normalized))
+    )
+    assert not waits_for_conversion(db_session, vacancy)
