@@ -41,6 +41,10 @@ def test_normalizes_a_djinni_item() -> None:
     assert vacancy.seniority == ("senior",)
     assert vacancy.work_formats == ("remote",)
     assert {"python", "gcp", "bigquery", "airflow"} <= set(vacancy.skills)
+    # Plain text: tags gone, block boundaries kept as spaces.
+    assert vacancy.description.startswith(
+        "Position: Senior Python / GCP Data Engineer Location: Remote Employment Type: Full-Time"
+    )
 
 
 def test_normalizes_a_dou_item_from_its_title() -> None:
@@ -53,6 +57,7 @@ def test_normalizes_a_dou_item_from_its_title() -> None:
     assert vacancy.seniority == ("senior",)
     assert vacancy.work_formats == ("remote",)
     assert {"azure", "kubernetes", "terraform"} <= set(vacancy.skills)
+    assert vacancy.description.startswith("Senior DevOps Engineer (Azure / AKS) Remote, for")
 
 
 def test_dou_flags_join_formats_found_in_the_text() -> None:
@@ -87,6 +92,7 @@ def test_tolerates_missing_and_malformed_fields() -> None:
     assert vacancy.category is None
     assert vacancy.published_at is None
     assert vacancy.salary is None
+    assert vacancy.description == ""
 
 
 def test_unknown_source_has_no_mapping() -> None:
@@ -129,7 +135,7 @@ PARSER_MODULES = (
 # The version and the parsers it was set for. Stored vacancies are rebuilt only
 # when NORMALIZER_VERSION changes, so a parser change that ships without a new
 # version leaves old rows parsed the old way.
-PINNED_PARSERS = (2, "2cd3bcfbddc107117f7151a7c34769c5295df41cab2fe69dd6f265a2a9a902c9")
+PINNED_PARSERS = (3, "bb063381a7cb841b3cf0cc1dc1ba8edf078af7d463d089158820ac6c7c8de274")
 
 
 def parsers_fingerprint() -> str:

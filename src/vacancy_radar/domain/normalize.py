@@ -23,7 +23,7 @@ from vacancy_radar.domain.skills import extract_skills
 from vacancy_radar.domain.text import html_to_text, normalize_text
 from vacancy_radar.domain.work_format import WorkFormat, detect_work_formats
 
-NORMALIZER_VERSION: Final = 2
+NORMALIZER_VERSION: Final = 3
 
 # Both sources publish in Kyiv time, and NBU sets its rates per Kyiv day.
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -43,6 +43,9 @@ class NormalizedVacancy:
     seniority: tuple[Level, ...]
     work_formats: tuple[WorkFormat, ...]
     skills: tuple[str, ...]
+    # The plain text of the feed's HTML description. Stored for deduplication
+    # and search, never shown in full: public pages show an excerpt.
+    description: str
 
 
 def normalize(source: str, payload: Payload) -> NormalizedVacancy:
@@ -68,6 +71,7 @@ def normalize_djinni(payload: Payload) -> NormalizedVacancy:
         seniority=detect_seniority(title),
         work_formats=detect_work_formats(title, text),
         skills=extract_skills(f"{title} {text}"),
+        description=text,
     )
 
 
@@ -85,6 +89,7 @@ def normalize_dou(payload: Payload) -> NormalizedVacancy:
         seniority=detect_seniority(parts.position),
         work_formats=detect_work_formats(parts.position, text, flagged=parts.work_formats),
         skills=extract_skills(f"{parts.position} {text}"),
+        description=text,
     )
 
 

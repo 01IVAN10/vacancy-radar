@@ -101,6 +101,8 @@ def test_stores_the_normalized_fields(db_session: Session, nbu: respx.MockRouter
     assert sales.category == "Sales Manager"
     assert sales.url == DJINNI_ITEMS[0].url
     assert sales.normalizer_version == NORMALIZER_VERSION
+    assert "40 000 - 60 000 грн" in sales.description
+    assert "<" not in sales.description
 
 
 def test_usd_salaries_need_no_rates(db_session: Session, nbu: respx.MockRouter) -> None:
