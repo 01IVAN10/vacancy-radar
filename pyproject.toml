@@ -82,7 +82,7 @@ known-first-party = ["vacancy_radar", "tests"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests", "migrations"]
+files = ["src", "tests", "migrations", "scripts"]
 # Map files to modules from these roots, so `tests/support.py` is `tests.support`.
 mypy_path = ["src"]
 explicit_package_bases = true

@@ -17,6 +17,12 @@ Items were picked to cover cases the parsers must handle, not at random.
 | `djinni/rss_python.xml` | `https://djinni.co/jobs/rss/?primary_keyword=Python` | 2026-11-05 | 5 of 100 | Location and work format in the title (`Warsaw, hybrid`); hourly rate (`$25/hour`); monthly range (`$600–1100/month`); mixed seniority (`Strong Junior / Middle`); USD range with currency word (`$2,000–$3,000 USD per month`). |
 | `nbu/usd_20261030_20261107.json`, `nbu/eur_20261030_20261107.json` | `https://bank.gov.ua/NBU_Exchange/exchange_site?start=20261030&end=20261107&valcode=<usd/eur>&sort=exchangedate&order=asc&json` | 2026-11-06 | all 9 | Official NBU rates, not trimmed: public reference data. They cover a weekend (rates repeat), a working-day change, and 2026-11-05, the day used in conversion tests. |
 
+## Deduplication pairs
+
+`dedup/pairs.json` holds 29 pairs of vacancies from the Neon backup of 2026-11-09, each labelled with the verdict `domain.dedup.same_job` must give (`same`, or the reason they differ) and why. The pairs were chosen for being hard: one job under decorated titles on two sites, reposts, different roles of one company that share their text, and one known miss. `docs/deduplication.md` explains each kind.
+
+Unlike the feeds, these are not copies of the items. Each vacancy keeps its source and its feed title, which public pages show anyway, and its description only as sorted 32-bit shingle hashes (base64 of big-endian integers). The hashes were made with a random key that was thrown away, so the words cannot be recovered by trying them one at a time; DOU's consent rules out publishing full descriptions (`docs/sources.md`, condition 3). The file records the `NORMALIZER_VERSION` its descriptions were read with. `scripts/dedup_sample.py fixture` rebuilds it from a local backup; it fetches nothing.
+
 The DOU fixture was fetched with one request, within the conditions of DOU's written consent (`docs/sources.md`).
 
 ## Telegram
