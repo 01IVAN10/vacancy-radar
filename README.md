@@ -135,7 +135,7 @@ src/vacancy_radar/
 ├── auth/       # password hashing, session tokens, CSRF tokens, registration and sign-in
 ├── collect/    # due checks, idempotent storage, the collector CLI and the Celery task
 ├── db/         # SQLAlchemy models and sync/async engines
-├── domain/     # pure functions: parsing, normalization, matching (no I/O)
+├── domain/     # pure functions: parsing, normalization, matching, deduplication (no I/O)
 ├── exchange/   # NBU exchange rates, cached in exchange_rate
 ├── normalize/  # raw_vacancy → vacancy: the reprocessing CLI and the Celery task
 ├── sources/    # one adapter per source (fetch + parse), behind SourceAdapter
@@ -145,5 +145,6 @@ src/vacancy_radar/
 ├── log.py      # structlog setup
 └── worker.py   # Celery app for the worker and Beat
 migrations/     # Alembic migrations (the only way the schema changes)
+scripts/        # developer tools run by hand, e.g. measuring deduplication on a backup
 tests/          # pytest; fixtures/ holds saved source responses
 ```

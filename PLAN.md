@@ -6,7 +6,7 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 
 ## Current state
 
-Updated 2026-11-08.
+Updated 2026-11-09.
 
 - **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
 - **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
@@ -15,7 +15,8 @@ Updated 2026-11-08.
 - **Stage 7** is done: subscription matching (#24), Telegram linking (#25) and notifications. `notify.match` gives each vacancy a cluster of its own and records the matches in `notification`, unique on `(subscription_id, cluster_id)`, with one `delivery` per account and cluster; `notify.send` sends each delivery at most once, with 429 handling (`docs/telegram.md`, Delivery). The bot's restart behaviour and delivery end to end were checked by hand on 2026-11-08: a Djinni run brought 46 new vacancies, 14 matched, and each arrived in Telegram once.
 - **Problems on the way:** the review found that unknown seniority, format and salary let a one-criterion subscription match almost every vacancy, and that the bot re-answered its last batch after every restart. Both are fixed. A salary not yet converted from UAH would have read as no salary, so matching waits up to an hour for conversion. A request that timed out after it was sent may have been delivered, so it is not retried.
 - **Before stage 8:** the architecture review of `main` (2026-11-08) is done. Its prep PRs are merged: a CI gate for `domain/` coverage ≥ 90% (#28), clustering in its own package `clusters/` with notify tests independent of it (#29), and the stage 8 rules below.
-- **Next:** stage 8 (deduplication). In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
+- **Stage 8** is in progress: vacancies keep their plain description (#33), and the same-job rule is measured on real data (`domain/dedup.py`, `docs/deduplication.md`). Next: assigning clusters with it.
+- **Next:** the rest of stage 8. In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days".
 
 ## Phase A: Start accumulating data
 
@@ -115,10 +116,10 @@ Decisions (2026-11-08):
 
 ### Stage 8: Deduplication
 - [x] Model `vacancy_cluster` (added in stage 7: one vacancy per cluster, set by `clusters/service.py`; this stage replaces that rule. Clusters are never merged, see Decisions)
-- [ ] Exact fingerprint (normalized company + title + city)
-- [ ] Fuzzy match: pg_trgm candidates → rapidfuzz scoring, conservative threshold
+- [x] Same-job rule: title words + description shingles, with vetoes (`domain/dedup.py`). It replaces the exact company + title + city fingerprint, which found nothing in real data (see Decisions 2026-11-09)
+- [ ] Candidates from a pg_trgm index on titles, judged by the rule (no rapidfuzz)
 - [ ] Cluster assignment task
-- [ ] Tests on real duplicate / non-duplicate pairs
+- [x] Tests on real duplicate / non-duplicate pairs
 
 Decisions (2026-11-08, before implementation):
 - **Attach-only.** A new vacancy joins an existing cluster or opens a new one; two existing clusters are never merged. So `notification.cluster_id` and `delivery.cluster_id` (both RESTRICT) and the unique `delivery (user_id, cluster_id)` need no changes. If merging is ever needed, it gets a "merged into" pointer, not repointed foreign keys. This is the conservative side: a missed duplicate is better than a wrong merge.
@@ -130,7 +131,15 @@ Decisions (2026-11-08, before implementation):
   - Djinni vacancies have no company (0/348), no cities (0/348) and rarely a salary (21/348) in the local DB on 2026-11-08, so an exact company + title + city fingerprint cannot work for Djinni. DOU takes company and cities from its title.
   - Real DOU data is only in Neon. Duplicate pairs for tests come from a copy of it (README, backing up the hosted database).
   - No migration creates `pg_trgm` yet; `tests/db/test_database.py` only checks that it is available.
-  - `rapidfuzz` is a new dependency and needs a one-line justification in its PR.
+  - `rapidfuzz` is a new dependency and needs a one-line justification in its PR. (Not needed after all, see 2026-11-09.)
+
+Decisions (2026-11-09, measured on the Neon backup of that day, details in `docs/deduplication.md`):
+- **The description decides, the title and vetoes guard it.** Two vacancies are the same job when 85% of their 4-word description shingles are shared, their titles agree (same words within one source, one a subset of the other across sources), and no veto applies (different levels, two different known companies, no shared place, salaries in one currency that cannot overlap). On 1644 items this gives 77 clusters with several vacancies (67 Djinni + DOU) and no wrong merge found. Text alone would have merged 87 more pairs, mostly different roles of one company.
+- **Complete linkage.** A vacancy joins a cluster only if it is the same job as every member.
+- **No exact fingerprint and no rapidfuzz.** DOU never reposted a vacancy with the same company and title in the sample, and Djinni has neither. Set operations on shingle hashes need no new dependency.
+- **The description is stored** as `vacancy.description` (#33, `NORMALIZER_VERSION` 3); stage 9 search reads it too.
+- **Test pairs keep no text.** DOU's consent rules out publishing full descriptions, so `tests/fixtures/dedup/pairs.json` keeps feed titles and the descriptions' shingle hashes, made with a random key that was thrown away (plain hashes can be turned back into text word by word, found in review). `scripts/dedup_sample.py` measures the rule on a backup and rebuilds the fixture.
+- **Numbers and symbols stay in titles.** "C#", "C++" and "C" are different words, and so are "Level 1" and "Level 2" (found in review); an internal number added on one site only is covered by the subset rule.
 
 ### Stage 9: Search and analytics
 - [ ] FTS `search_vector` (`simple` + `unaccent`), GIN on it and on `skills`, trigram on title
