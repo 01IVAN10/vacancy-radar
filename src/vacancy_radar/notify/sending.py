@@ -25,6 +25,7 @@ import structlog
 from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
+from vacancy_radar.db import locks
 from vacancy_radar.db.models import Delivery, Notification, Source, Subscription, User, Vacancy
 from vacancy_radar.notify.message import VacancyCard, render_message
 from vacancy_radar.notify.outcome import GiveUp, Outcome, Retry, outcome_of
@@ -37,9 +38,6 @@ logger = structlog.get_logger("vacancy_radar.notify")
 # next run picks up the rest. At one request a second it fits in a minute,
 # the interval Beat sends `notify.send` at.
 MAX_DELIVERIES_PER_RUN: Final = 50
-
-# First key of the two-key advisory lock; collection uses 1.
-NOTIFY_LOCK_NAMESPACE: Final = 2
 
 NO_VACANCY: Final = "the cluster has no vacancy left"
 # Far longer than a run (at most 50 requests at one a second).
@@ -76,14 +74,12 @@ def sender_lock(engine: Engine) -> Iterator[bool]:
     that took it.
     """
     with engine.connect() as connection:
-        locked = bool(
-            connection.scalar(select(func.pg_try_advisory_lock(NOTIFY_LOCK_NAMESPACE, 0)))
-        )
+        locked = bool(connection.scalar(select(func.pg_try_advisory_lock(locks.NOTIFY, 0))))
         try:
             yield locked
         finally:
             if locked:
-                connection.scalar(select(func.pg_advisory_unlock(NOTIFY_LOCK_NAMESPACE, 0)))
+                connection.scalar(select(func.pg_advisory_unlock(locks.NOTIFY, 0)))
             connection.rollback()
 
 

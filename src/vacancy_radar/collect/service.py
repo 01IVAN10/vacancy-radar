@@ -24,6 +24,7 @@ from sqlalchemy import func, literal_column, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from vacancy_radar.db import locks
 from vacancy_radar.db.models import CollectRun, RawVacancy, Source
 from vacancy_radar.sources.base import RawItem, SourceAdapter
 
@@ -96,11 +97,6 @@ class CollectError(Exception):
         super().__init__(f"{type(error).__name__}: {error}")
         self.run_id = run_id
         self.error = error
-
-
-# First key of the two-key advisory lock: keeps collection locks apart from
-# any other advisory lock the application may take later.
-COLLECT_LOCK_NAMESPACE = 1
 
 
 def ensure_source(session: Session, adapter: SourceAdapter) -> int:
@@ -200,7 +196,7 @@ def try_lock_source(session: Session, adapter: SourceAdapter) -> bool:
     or rollback, so a crashed collector never leaves it behind.
     """
     locked = session.scalar(
-        select(func.pg_try_advisory_xact_lock(COLLECT_LOCK_NAMESPACE, func.hashtext(adapter.slug)))
+        select(func.pg_try_advisory_xact_lock(locks.COLLECT, func.hashtext(adapter.slug)))
     )
     return bool(locked)
 
