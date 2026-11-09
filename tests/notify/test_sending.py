@@ -7,6 +7,7 @@ tests check that `send_pending` stores and acts on it.
 import json
 from collections.abc import Iterator
 from datetime import timedelta
+from typing import Any
 from unittest.mock import Mock
 
 import httpx
@@ -23,9 +24,10 @@ from tests.notify.factories import (
     add_clustered_vacancy,
     add_subscription,
     add_user,
+    add_vacancy,
 )
 from tests.support import fixture_bytes
-from vacancy_radar.db.models import Delivery, User, Vacancy
+from vacancy_radar.db.models import Delivery, Subscription, User, Vacancy
 from vacancy_radar.notify import sending
 from vacancy_radar.notify.matching import match_new
 from vacancy_radar.notify.outcome import BACKOFF_MAX_SECONDS, MAX_ATTEMPTS, OUTCOME_UNKNOWN
@@ -336,6 +338,84 @@ def test_the_message_shows_a_vacancy_the_cluster_still_has(
 
     assert send(db_session, client) == SendResult(sent=1)
     assert "<b>Renamed Python Developer</b>" in json.loads(route.calls.last.request.content)["text"]
+
+
+def add_member(session: Session, title: str, **columns: Any) -> None:
+    """Another vacancy in the cluster of the only queued delivery."""
+    [delivery] = deliveries(session)
+    add_vacancy(session, title=title, cluster_id=delivery.cluster_id, **columns)
+
+
+def shown_title(session: Session) -> str:
+    claim = claim_next(session, now=NOW)
+    assert claim is not None
+    assert claim.card is not None
+    return claim.card.title
+
+
+def test_the_message_shows_a_member_with_a_salary_first(db_session: Session) -> None:
+    queue_one(db_session)  # "Python Developer": a company, no salary
+    add_member(
+        db_session,
+        "With salary",
+        company=None,
+        salary_min=3000,
+        salary_max=4000,
+        salary_currency="USD",
+        salary_period="month",
+    )
+
+    assert shown_title(db_session) == "With salary"
+
+
+def test_the_message_shows_a_member_with_a_company_next(db_session: Session) -> None:
+    queue_one(db_session)
+    db_session.execute(update(Vacancy).values(company=None))
+    add_member(db_session, "With company", company="Acme")
+
+    assert shown_title(db_session) == "With company"
+
+
+def test_of_equally_complete_members_the_message_shows_the_first(db_session: Session) -> None:
+    queue_one(db_session)
+    add_member(db_session, "Later", company="Acme")
+
+    assert shown_title(db_session) == "Python Developer"
+
+
+def test_the_message_shows_a_member_the_subscription_matches(db_session: Session) -> None:
+    """A fuller vacancy the filter rules out would contradict the reason for the message."""
+    queue_one(db_session)  # the subscription wants Python
+    add_member(
+        db_session,
+        "Java with salary",
+        skills=["java"],
+        salary_min=3000,
+        salary_max=4000,
+        salary_currency="USD",
+        salary_period="month",
+        salary_usd_min=3000,
+        salary_usd_max=4000,
+    )
+
+    assert shown_title(db_session) == "Python Developer"
+
+
+def test_if_no_member_matches_any_more_the_message_shows_the_fullest(
+    db_session: Session,
+) -> None:
+    queue_one(db_session)
+    db_session.execute(update(Subscription).values(skills=["rust"]))  # edited after matching
+    add_member(
+        db_session,
+        "With salary",
+        salary_min=3000,
+        salary_max=4000,
+        salary_currency="USD",
+        salary_period="month",
+    )
+
+    assert shown_title(db_session) == "With salary"
 
 
 def test_a_cluster_without_vacancies_is_skipped(

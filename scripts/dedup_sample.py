@@ -1,15 +1,23 @@
-"""Measure deduplication on a backup of the hosted database, and rebuild its test fixture.
+"""Measure deduplication on a backup of the hosted database, check it, and rebuild its fixture.
 
     uv run python scripts/dedup_sample.py measure BACKUP.dump
+    uv run python scripts/dedup_sample.py check BACKUP.dump DATABASE_URL
     uv run python scripts/dedup_sample.py fixture BACKUP.dump tests/fixtures/dedup/pairs.json
 
 BACKUP.dump is a `pg_dump --format=custom` backup (README, backing up the
 hosted database). Its `source` and `raw_vacancy` rows are read into memory
 with `pg_restore` (the `PG_RESTORE` variable, else `pg_restore` on PATH).
 Every item is normalized with the current parsers and clustered in first-seen
-order, as the cluster assignment does. Nothing is written to a database and
-nothing is fetched from a source. `docs/deduplication.md` reports the output
-of `measure`.
+order with `domain.dedup.pick_cluster`, in memory. `docs/deduplication.md`
+reports the output of `measure`.
+
+`measure` compares every new vacancy with every cluster, so it does not go
+through the cluster assignment's trigram search and time window. `check`
+closes that gap: it restores the backup into an empty local database whose
+name ends in `_check`, migrates it, and runs the real `normalize_pending` and
+`assign_clusters` on it, then compares their clusters with the in-memory
+ones and exits 1 if they differ. It writes only to that database, which the
+operator creates and drops. No command fetches anything from a source.
 
 `fixture` writes the real pairs listed in `PAIRS`. Each vacancy keeps its feed
 title, which public pages show anyway, and its description only as shingle
@@ -31,10 +39,19 @@ import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from itertools import combinations
 from pathlib import Path
 from typing import Any
 
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.orm import Session
+
+from vacancy_radar.clusters.service import MAX_PER_RUN, Clustered, assign_clusters
+from vacancy_radar.db.models import RawVacancy, Source, Vacancy
 from vacancy_radar.domain import dedup
 from vacancy_radar.domain.dedup import (
     TEXT_THRESHOLD,
@@ -45,6 +62,10 @@ from vacancy_radar.domain.dedup import (
     shingles,
 )
 from vacancy_radar.domain.normalize import NORMALIZER_VERSION, NormalizedVacancy, normalize
+from vacancy_radar.normalize.service import normalize_pending
+from vacancy_radar.notify.matching import LOOKBACK
+
+ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 # (a, b, expected verdict, why, known miss). A known miss expects "same" and is
 # marked xfail: the rule keeps the pair apart today, and a rule that joins it
@@ -205,6 +226,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("measure").add_argument("backup", type=Path)
+    check_command = commands.add_parser("check")
+    check_command.add_argument("backup", type=Path)
+    check_command.add_argument("database_url", help="an empty database whose name ends in _check")
     fixture = commands.add_parser("fixture")
     fixture.add_argument("backup", type=Path)
     fixture.add_argument("out", type=Path)
@@ -213,6 +237,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     items = load(args.backup)
     if args.command == "measure":
         measure(items)
+    elif args.command == "check":
+        sys.exit(check(args.backup, items, make_url(args.database_url)))
     else:
         write_fixture(items, args.out)
 
@@ -236,14 +262,18 @@ def load(backup: Path) -> list[Item]:
     return sorted(items, key=lambda item: (item.first_seen_at, item.raw_id))
 
 
+def pg_restore() -> str:
+    found = os.environ.get("PG_RESTORE") or shutil.which("pg_restore")
+    if found is None:
+        sys.exit("pg_restore not found: set PG_RESTORE or put it on PATH")
+    return found
+
+
 def copy_rows(backup: Path, table: str) -> list[list[str]]:
     """The rows of one table's `COPY` data in the backup, as text fields."""
-    pg_restore = os.environ.get("PG_RESTORE") or shutil.which("pg_restore")
-    if pg_restore is None:
-        sys.exit("pg_restore not found: set PG_RESTORE or put it on PATH")
     # Runs a local binary on a local file the operator named; no shell.
     dump = subprocess.run(  # noqa: S603
-        [pg_restore, "--data-only", "--table", table, "--file", "-", str(backup)],
+        [pg_restore(), "--data-only", "--table", table, "--file", "-", str(backup)],
         check=True,
         capture_output=True,
         text=True,
@@ -317,11 +347,39 @@ def measure(items: list[Item]) -> None:
         changed.append(len(first_seen ^ set(clusters(shuffled, facts))) // 2)
     print(f"clusters that differ in {SHUFFLES} random arrival orders: max {max(changed)}")
 
+    late_members(items, first_seen)
+
     places = Counter(city for item in items for city in item.vacancy.cities)
     flags = {
         city: n for city, n in places.items() if city in ("віддалено", "гібрид", "за кордоном")
     }
     print(f"distinct places: {len(places)}; format or abroad flags among them: {flags}")
+
+
+def late_members(items: list[Item], groups: Iterable[frozenset[str]]) -> None:
+    """How long after its cluster's first posting each later member was first seen."""
+    by_key = {item.key: item for item in items}
+    late = []
+    for group in groups:
+        members = sorted((datetime.fromisoformat(by_key[key].first_seen_at), key) for key in group)
+        first_seen, first = members[0]
+        for seen, key in members[1:]:
+            late.append((seen - first_seen, key, first))
+    if not late:
+        return
+    beyond = [entry for entry in late if entry[0] > LOOKBACK]
+    other_source = [entry for entry in beyond if entry[1].split(":")[0] != entry[2].split(":")[0]]
+    other_format = [
+        entry
+        for entry in other_source
+        if by_key[entry[1]].vacancy.work_formats != by_key[entry[2]].vacancy.work_formats
+    ]
+    longest = max(gap for gap, _, _ in late)
+    print(
+        f"later members: {len(late)}; first seen more than {LOOKBACK} after their cluster: "
+        f"{len(beyond)} ({len(other_source)} from the other source, {len(other_format)} of "
+        f"them with other work formats); longest gap {longest.total_seconds() / 3600:.1f} h"
+    )
 
 
 def similar_pairs(facts: dict[str, DedupFacts], threshold: float) -> list[tuple[str, str]]:
@@ -377,6 +435,77 @@ def describe(group: frozenset[str], items: list[Item], facts: dict[str, DedupFac
     )
     titles = ", ".join(f"{key} {title_of(key, items)!r}" for key in sorted(group))
     return f"text {least:.2f}: {titles}"
+
+
+# --- check ------------------------------------------------------------------------
+
+
+def check(backup: Path, items: list[Item], url: URL) -> int:
+    """Cluster a copy of the backup with the real code; 0 if it matches `measure`, else 1."""
+    if not (url.database or "").endswith("_check"):
+        sys.exit("the database name must end in _check: the backup is restored into it")
+    url = url.set(drivername="postgresql+psycopg")
+    engine = create_engine(url)
+    with engine.connect() as connection:
+        tables = connection.scalar(
+            text("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")
+        )
+    if tables:
+        sys.exit(f"{url.database} is not empty: create a new database for each check")
+
+    # Connection details as options and the password in the environment, so
+    # the password does not show in the process list.
+    subprocess.run(  # noqa: S603 - a local binary, a local file, no shell
+        [
+            pg_restore(),
+            "--no-owner",
+            "--no-privileges",
+            "--host",
+            url.host or "localhost",
+            "--port",
+            str(url.port or 5432),
+            "--username",
+            url.username or "",
+            "--dbname",
+            url.database or "",
+            str(backup),
+        ],
+        check=True,
+        env=os.environ | {"PGPASSWORD": url.password or ""},
+    )
+    config = Config(str(ALEMBIC_INI))
+    # configparser reads "%" as interpolation, so a password with one needs it doubled.
+    config.set_main_option(
+        "sqlalchemy.url", url.render_as_string(hide_password=False).replace("%", "%%")
+    )
+    command.upgrade(config, "head")
+
+    with Session(engine) as session:
+        print(f"normalized: {normalize_pending(session)}")
+        while isinstance(run := assign_clusters(session), Clustered):
+            if run.assigned < MAX_PER_RUN:
+                break
+        rows = session.execute(
+            select(Vacancy.cluster_id, Source.slug, RawVacancy.external_id)
+            .join(RawVacancy, RawVacancy.id == Vacancy.raw_vacancy_id)
+            .join(Source, Source.id == Vacancy.source_id)
+        ).all()
+    groups: defaultdict[int | None, set[str]] = defaultdict(set)
+    for cluster_id, slug, external_id in rows:
+        groups[cluster_id].add(f"{slug}:{external_id}")
+    produced = {frozenset(keys) for keys in groups.values()}
+
+    facts = {item.key: facts_of(item) for item in items}
+    expected = set(clusters(items, facts))
+    print(
+        f"assign_clusters: {len(produced)} clusters, "
+        f"{sum(len(group) > 1 for group in produced)} with several; "
+        f"in memory: {len(expected)}, {sum(len(group) > 1 for group in expected)}"
+    )
+    for group in sorted(produced ^ expected, key=sorted):
+        side = "only assign_clusters" if group in produced else "only in memory"
+        print(f"  {side}: {sorted(group)}")
+    return 0 if produced == expected else 1
 
 
 # --- fixture ----------------------------------------------------------------------

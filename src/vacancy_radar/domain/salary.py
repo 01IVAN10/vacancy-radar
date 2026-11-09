@@ -21,10 +21,14 @@ single ASCII spaces, no entities.
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Final, Literal
+from typing import Final, Literal, Self
+
+from vacancy_radar.domain.choices import one_of
 
 Currency = Literal["USD", "EUR", "UAH"]
 Period = Literal["month", "year", "hour"]
+CURRENCIES: Final[tuple[Currency, ...]] = ("USD", "EUR", "UAH")
+PERIODS: Final[tuple[Period, ...]] = ("month", "year", "hour")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +53,24 @@ class Salary:
             and self.min_amount > self.max_amount
         ):
             raise ValueError(f"min_amount {self.min_amount} > max_amount {self.max_amount}")
+
+    @classmethod
+    def from_stored(
+        cls,
+        min_amount: int | None,
+        max_amount: int | None,
+        currency: str | None,
+        period: str | None,
+    ) -> Self | None:
+        """The salary of a stored `vacancy` row, or None when the row states none.
+
+        Raises `ValueError` for values the database constraints should have
+        kept out: an unknown currency or period, or a range that starts above
+        its end.
+        """
+        if currency is None or period is None:
+            return None
+        return cls(min_amount, max_amount, one_of(currency, CURRENCIES), one_of(period, PERIODS))
 
 
 # --- the money pattern -------------------------------------------------------

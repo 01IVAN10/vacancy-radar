@@ -12,3 +12,6 @@ from typing import Final
 COLLECT: Final = 1
 # One lock, key 0: one `notify.send` run sends at a time.
 NOTIFY: Final = 2
+# One lock, key 0, held for a whole transaction: one clustering run at a time,
+# so the two halves of one duplicate pair never open two clusters.
+CLUSTER: Final = 3

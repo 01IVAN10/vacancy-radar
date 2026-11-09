@@ -6,13 +6,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import redis
 import respx
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 from structlog.testing import capture_logs
 
-from tests.notify.factories import add_subscription, add_user, add_vacancy
+from tests.notify.factories import JOB_TEXT, add_subscription, add_user, add_vacancy
 from tests.support import fixture_bytes
 from vacancy_radar.config import get_settings
+from vacancy_radar.db import locks
 from vacancy_radar.db.models import Delivery
 from vacancy_radar.notify import tasks
 from vacancy_radar.notify.sending import sender_lock
@@ -64,9 +65,91 @@ def test_match_clusters_and_queues(committed_database: Engine) -> None:
     second = match_task.apply()
 
     assert first.successful(), first.result
-    assert first.result == {"clustered": 1, "matched": 1, "queued": 1}
-    assert second.result == {"clustered": 0, "matched": 0, "queued": 0}
+    assert first.result == {"opened": 1, "joined": 0, "matched": 1, "queued": 1}
+    assert second.result == {"opened": 0, "joined": 0, "matched": 0, "queued": 0}
     assert statuses(committed_database) == ["pending"]
+
+
+def test_a_duplicate_of_a_matched_vacancy_queues_nothing(committed_database: Engine) -> None:
+    now = datetime.now(UTC)
+    with Session(committed_database) as session:
+        user = add_user(session, linked_at=now - timedelta(days=1))
+        add_subscription(session, user, active_since=now - timedelta(days=1))
+        add_vacancy(
+            session, company=None, description=JOB_TEXT, first_seen_at=now - timedelta(hours=1)
+        )
+        session.commit()
+    match_task.apply()
+    with Session(committed_database) as session:
+        add_vacancy(session, source="dou", company="Acme", description=JOB_TEXT)
+        session.commit()
+
+    result = match_task.apply().result
+
+    # The DOU posting joins the cluster first seen an hour ago: the same job, not news.
+    assert result == {"opened": 0, "joined": 1, "matched": 0, "queued": 0}
+    assert statuses(committed_database) == ["pending"]
+
+
+@pytest.mark.parametrize(
+    "first_seen_ago",
+    [
+        pytest.param(timedelta(hours=3), id="cluster-inside-lookback"),
+        pytest.param(timedelta(days=3), id="cluster-outside-lookback"),
+    ],
+)
+def test_a_duplicate_can_match_what_its_first_posting_did_not(
+    committed_database: Engine, first_seen_ago: timedelta
+) -> None:
+    """Any vacancy of a cluster matches it, however old the cluster's first posting.
+
+    Djinni says "office", which the subscription rules out; DOU's copy of the
+    job says "remote", and it arrives later, inside the lookback of its own.
+    """
+    now = datetime.now(UTC)
+    with Session(committed_database) as session:
+        user = add_user(session, linked_at=now - timedelta(days=7))
+        add_subscription(
+            session, user, active_since=now - timedelta(days=7), work_formats=["remote"]
+        )
+        add_vacancy(
+            session,
+            company=None,
+            description=JOB_TEXT,
+            work_formats=["office"],
+            first_seen_at=now - first_seen_ago,
+        )
+        session.commit()
+    assert match_task.apply().result == {"opened": 1, "joined": 0, "matched": 0, "queued": 0}
+    with Session(committed_database) as session:
+        add_vacancy(
+            session,
+            source="dou",
+            company="Acme",
+            description=JOB_TEXT,
+            work_formats=["remote"],
+            first_seen_at=now - timedelta(minutes=1),
+        )
+        session.commit()
+
+    result = match_task.apply().result
+
+    assert result == {"opened": 0, "joined": 1, "matched": 1, "queued": 1}
+    assert statuses(committed_database) == ["pending"]
+
+
+def test_match_goes_on_while_another_run_is_clustering(committed_database: Engine) -> None:
+    seed(committed_database)
+
+    with committed_database.connect() as other, capture_logs() as logs:
+        other.execute(select(func.pg_advisory_lock(locks.CLUSTER, 0)))
+        try:
+            result = match_task.apply().result
+        finally:
+            other.execute(select(func.pg_advisory_unlock(locks.CLUSTER, 0)))
+
+    assert result == {"opened": 0, "joined": 0, "matched": 0, "queued": 0}
+    assert "clusters.busy" in [log["event"] for log in logs]
 
 
 def test_send_delivers_once(committed_database: Engine, api: respx.MockRouter) -> None:

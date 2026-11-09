@@ -6,8 +6,9 @@ a unique company, so no clustering rule can take two of them for the same job.
 """
 
 from datetime import UTC, datetime, timedelta
+from enum import Enum, auto
 from itertools import count
-from typing import Any
+from typing import Any, Final, Literal
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,19 @@ LINKED_AT = NOW - timedelta(days=1)
 CHAT_ID = 123456789
 
 _ids = count(1)
+
+
+class _Default(Enum):
+    # The default company of `add_vacancy`: one of its own for every vacancy.
+    UNIQUE_COMPANY = auto()
+
+
+# A description long enough for deduplication to compare (57 shingles).
+JOB_TEXT: Final = " ".join(f"word{n}" for n in range(60))
+JOB_URLS: Final = {
+    "djinni": "https://djinni.co/jobs/{}/",
+    "dou": "https://jobs.dou.ua/vacancies/{}/",
+}
 
 
 def add_user(
@@ -57,11 +71,10 @@ def add_subscription(
         name=name,
         skills=["python"] if skills is None else skills,
         skills_match="any",
-        seniority=[],
-        work_formats=[],
         active_since=active_since,
         is_active=is_active,
-        **columns,
+        # Defaults a test may override through `columns`.
+        **({"seniority": [], "work_formats": []} | columns),
     )
     session.add(subscription)
     session.flush()
@@ -74,19 +87,21 @@ def add_vacancy(
     first_seen_at: datetime = NOW - timedelta(hours=2),
     normalized_at: datetime = NOW - timedelta(hours=2),
     title: str = "Python Developer",
-    company: str | None = None,
+    company: str | Literal[_Default.UNIQUE_COMPANY] | None = _Default.UNIQUE_COMPANY,
     skills: list[str] | None = None,
     description: str = "",
+    source: str = "djinni",
     **columns: Any,
 ) -> Vacancy:
-    """A normalized Djinni vacancy whose raw item was first seen at `first_seen_at`.
+    """A normalized vacancy whose raw item was first seen at `first_seen_at`.
 
-    `company` defaults to one unique to this vacancy.
+    `company` defaults to one unique to this vacancy; None leaves it unknown,
+    as Djinni does.
     """
     external_id = str(next(_ids))
-    url = f"https://djinni.co/jobs/{external_id}/"
+    url = JOB_URLS[source].format(external_id)
     raw = RawVacancy(
-        source_id=ensure_source(session, ADAPTERS["djinni"]),
+        source_id=ensure_source(session, ADAPTERS[source]),
         external_id=external_id,
         url=url,
         payload={},
@@ -99,16 +114,14 @@ def add_vacancy(
         source_id=raw.source_id,
         url=url,
         title=title,
-        company=f"Company {external_id}" if company is None else company,
-        cities=["Kyiv"],
+        company=f"Company {external_id}" if company is _Default.UNIQUE_COMPANY else company,
         skills=["python"] if skills is None else skills,
-        seniority=[],
-        work_formats=[],
         description=description,
         normalizer_version=NORMALIZER_VERSION,
         raw_updated_at=first_seen_at,
         normalized_at=normalized_at,
-        **columns,
+        # Defaults a test may override through `columns`.
+        **({"cities": ["Kyiv"], "seniority": [], "work_formats": []} | columns),
     )
     session.add(vacancy)
     session.flush()

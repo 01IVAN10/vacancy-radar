@@ -11,7 +11,7 @@ task whenever the raw item or the parsers change. `skill` mirrors the skill
 dictionary in `domain/skills.py`, so SQL can show skill names.
 
 `vacancy_cluster` groups the vacancies that are one job posted on several
-sources. Until deduplication (stage 8) every vacancy is its own cluster.
+sources or reposted (`clusters/service.py`, `docs/deduplication.md`).
 
 `app_user` holds accounts, and `subscription` the filters each account
 wants vacancies sent for. `telegram_link_token` holds the one-time tokens
@@ -181,6 +181,13 @@ class Vacancy(Base):
         ),
         CheckConstraint(_known_values("seniority", LEVELS), name="seniority_known"),
         CheckConstraint(_known_values("work_formats", WORK_FORMATS), name="work_formats_known"),
+        # Trigrams of the title: deduplication finds its candidates with `title % :title`.
+        Index(
+            "ix_vacancy_title_trgm",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -210,8 +217,8 @@ class Vacancy(Base):
     normalizer_version: Mapped[int] = mapped_column(SmallInteger)
     raw_updated_at: Mapped[datetime]
     normalized_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    # Set by `clusters.service.assign_clusters`, never by normalization, so a
-    # rebuilt vacancy keeps its cluster and is not sent again.
+    # Set once by `clusters.service.assign_clusters`, never by normalization, so
+    # a rebuilt vacancy keeps its cluster and is not sent again.
     cluster_id: Mapped[int | None] = mapped_column(
         ForeignKey("vacancy_cluster.id", ondelete="RESTRICT"), index=True
     )
@@ -220,10 +227,15 @@ class Vacancy(Base):
 class VacancyCluster(Base):
     """One job, however many sources posted it.
 
+    Clusters only grow: a new vacancy joins one or opens its own, and two
+    clusters are never merged, so the deliveries keyed by a cluster stay valid.
+
     `first_seen_at` is the earliest `raw_vacancy.first_seen_at` of its
     vacancies, not the time the cluster was created. Rebuilding the derived
     tables from raw data therefore never makes an old vacancy look new, and
-    notifications compare it with when a subscription started.
+    notifications compare it with when a subscription started: a job that
+    appeared before a subscription is never sent to it, whichever of its
+    postings arrives later.
     """
 
     __tablename__ = "vacancy_cluster"
@@ -339,9 +351,9 @@ class Delivery(Base):
     cluster from reaching the same chat twice: a subscription that matches
     later joins the existing delivery instead of making a new one. It keeps
     no `vacancy_id`: the vacancy to show is chosen from the cluster when the
-    message is sent, so rebuilding or merging vacancies never erases the
-    record of what was sent. `cluster_id` is RESTRICT: merging clusters
-    (stage 8) must decide what happens to their deliveries.
+    message is sent, so rebuilding vacancies or adding one to the cluster
+    never erases the record of what was sent. `cluster_id` is RESTRICT:
+    clusters are never merged or deleted while a delivery points at them.
     """
 
     __tablename__ = "delivery"

@@ -135,7 +135,7 @@ PARSER_MODULES = (
 # The version and the parsers it was set for. Stored vacancies are rebuilt only
 # when NORMALIZER_VERSION changes, so a parser change that ships without a new
 # version leaves old rows parsed the old way.
-PINNED_PARSERS = (3, "bb063381a7cb841b3cf0cc1dc1ba8edf078af7d463d089158820ac6c7c8de274")
+PINNED_PARSERS = (3, "68b97e3d75fb2af7e5d92e21d396b6c4948cbd344712b850983365ef258d063c")
 
 
 def parsers_fingerprint() -> str:
