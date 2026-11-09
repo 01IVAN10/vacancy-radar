@@ -27,7 +27,7 @@ from tests.notify.factories import (
     add_vacancy,
 )
 from tests.support import fixture_bytes
-from vacancy_radar.db.models import Delivery, User, Vacancy
+from vacancy_radar.db.models import Delivery, Subscription, User, Vacancy
 from vacancy_radar.notify import sending
 from vacancy_radar.notify.matching import match_new
 from vacancy_radar.notify.outcome import BACKOFF_MAX_SECONDS, MAX_ATTEMPTS, OUTCOME_UNKNOWN
@@ -381,6 +381,41 @@ def test_of_equally_complete_members_the_message_shows_the_first(db_session: Ses
     add_member(db_session, "Later", company="Acme")
 
     assert shown_title(db_session) == "Python Developer"
+
+
+def test_the_message_shows_a_member_the_subscription_matches(db_session: Session) -> None:
+    """A fuller vacancy the filter rules out would contradict the reason for the message."""
+    queue_one(db_session)  # the subscription wants Python
+    add_member(
+        db_session,
+        "Java with salary",
+        skills=["java"],
+        salary_min=3000,
+        salary_max=4000,
+        salary_currency="USD",
+        salary_period="month",
+        salary_usd_min=3000,
+        salary_usd_max=4000,
+    )
+
+    assert shown_title(db_session) == "Python Developer"
+
+
+def test_if_no_member_matches_any_more_the_message_shows_the_fullest(
+    db_session: Session,
+) -> None:
+    queue_one(db_session)
+    db_session.execute(update(Subscription).values(skills=["rust"]))  # edited after matching
+    add_member(
+        db_session,
+        "With salary",
+        salary_min=3000,
+        salary_max=4000,
+        salary_currency="USD",
+        salary_period="month",
+    )
+
+    assert shown_title(db_session) == "With salary"
 
 
 def test_a_cluster_without_vacancies_is_skipped(

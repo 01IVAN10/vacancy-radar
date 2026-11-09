@@ -233,8 +233,9 @@ class VacancyCluster(Base):
     `first_seen_at` is the earliest `raw_vacancy.first_seen_at` of its
     vacancies, not the time the cluster was created. Rebuilding the derived
     tables from raw data therefore never makes an old vacancy look new, and
-    notifications compare it with when a subscription started. A vacancy
-    that joins an old cluster stays behind that time, so it sends nothing.
+    notifications compare it with when a subscription started: a job that
+    appeared before a subscription is never sent to it, whichever of its
+    postings arrives later.
     """
 
     __tablename__ = "vacancy_cluster"

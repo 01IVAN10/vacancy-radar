@@ -173,6 +173,42 @@ def test_nothing_older_than_the_lookback(db_session: Session) -> None:
     assert [row[2] for row in queued(db_session)] == [inside.id]
 
 
+def test_a_new_vacancy_of_an_older_cluster_is_matched_on_its_own_facts(
+    db_session: Session,
+) -> None:
+    """The lookback counts from each vacancy's first sighting, not the cluster's."""
+    user = add_user(db_session, linked_at=NOW - LOOKBACK * 3)
+    add_subscription(db_session, user, active_since=NOW - LOOKBACK * 3, skills=["go"])
+    first = add_clustered_vacancy(db_session, first_seen_at=NOW - LOOKBACK * 2, skills=["java"])
+    later = add_vacancy(
+        db_session,
+        cluster_id=first.cluster_id,
+        first_seen_at=NOW - timedelta(hours=1),
+        skills=["go"],
+    )
+
+    assert match_new(db_session, now=NOW) == MatchResult(matched=1, queued=1)
+    assert first.cluster_id == later.cluster_id
+    assert [row[1] for row in queued(db_session)] == [first.cluster_id, first.cluster_id]
+
+
+def test_a_new_vacancy_of_a_cluster_older_than_the_subscription_is_not_matched(
+    db_session: Session,
+) -> None:
+    """The watermark stays on the cluster: the job appeared before the subscription did."""
+    user = add_user(db_session, linked_at=NOW - LOOKBACK * 3)
+    add_subscription(db_session, user, active_since=NOW - LOOKBACK, skills=["go"])
+    first = add_clustered_vacancy(db_session, first_seen_at=NOW - LOOKBACK * 2, skills=["java"])
+    add_vacancy(
+        db_session,
+        cluster_id=first.cluster_id,
+        first_seen_at=NOW - timedelta(hours=1),
+        skills=["go"],
+    )
+
+    assert match_new(db_session, now=NOW) == MatchResult()
+
+
 def test_a_vacancy_without_a_cluster_waits(db_session: Session) -> None:
     add_subscription(db_session, add_user(db_session))
     add_vacancy(db_session)

@@ -25,19 +25,18 @@ Two vacancies are the same job when no veto applies and both their titles and th
 
 ## How it runs
 
-`assign_clusters` (`clusters/service.py`) gives every vacancy without a cluster one. `notify.match` runs it before matching, every 5 minutes, and `python -m vacancy_radar.clusters` runs it by hand and logs `clusters.assigned` with how many vacancies opened a cluster and how many joined one.
+`assign_clusters` (`clusters/service.py`) gives up to 1000 vacancies without a cluster one and commits. `notify.match` runs it once before matching, every 5 minutes, so a larger backlog is worked off over several runs. `python -m vacancy_radar.clusters` runs it by hand until nothing is left, and logs `clusters.assigned` with how many vacancies opened a cluster and how many joined one.
 
 - **Attach-only.** A new vacancy joins an existing cluster or opens one. Clusters are never merged, and a vacancy keeps its cluster for good, re-normalization included, because a new cluster would mean a new delivery and a repeat message (PLAN.md, stage 8 decisions).
-- **One run at a time.** A run holds a transaction-level advisory lock (`db/locks.py`, `CLUSTER`) until it commits. A run that finds it taken does nothing and logs `clusters.busy`; `notify.match` then matches what is clustered already.
+- **One run at a time.** A run holds a transaction-level advisory lock (`db/locks.py`, `CLUSTER`) until it commits. A run that finds it taken changes nothing, logs `clusters.busy` and returns `Busy`; `notify.match` then matches what is clustered already.
 - **First seen first.** New vacancies are taken one at a time in the order their raw items were first seen, so the later half of a pair that arrives in the same run finds the earlier one, and the earlier one opens the cluster.
-- **Candidates.** A new vacancy is compared only with vacancies whose titles share enough trigrams with its own (`title % :title`, pg_trgm's default threshold of 0.3, GIN index `ix_vacancy_title_trgm`) and that were first seen within 30 days of it. Then `pick_cluster` compares it with every member of their clusters. The trigram search finds every duplicate pair of the test sample (`test_candidates_include_every_duplicate_pair_of_the_sample`).
-- **First sighting.** A cluster's `first_seen_at` is the earliest first sighting of its members. A vacancy that joins an old cluster stays behind the matching watermark (`docs/telegram.md`), so the same job is not sent again.
-
-Checked end to end on 2026-11-09: the backup restored into a throwaway local database, migrated, normalized, and clustered with `python -m vacancy_radar.clusters` gave the measured result exactly (1565 clusters, 77 with several vacancies, 67 of them Djinni + DOU) in about 14 seconds for 1644 vacancies. A second run changed nothing, and rebuilding every vacancy kept every cluster.
+- **Candidates.** A new vacancy is compared only with the clusters of vacancies whose titles share enough trigrams with its own (`title % :title`, pg_trgm's default threshold of 0.3, GIN index `ix_vacancy_title_trgm`) and that were first seen within 30 days of it (`CANDIDATE_WINDOW`). Then `pick_cluster` compares it with every member of those clusters. A run reads each vacancy's facts once. Every duplicate pair of the test sample ends up in one cluster through this search (`test_every_duplicate_pair_of_the_sample_shares_a_cluster`).
+- **The 30-day window is an assumption.** The sample is four days long, and the longest gap between two postings of one job in it, 91 hours, says more about the sample than about how sites repost. It is to be measured again on a longer sample with the findings PR. A posting further from its twin opens a cluster of its own and is sent again, as a new job.
+- **First sighting.** A cluster's `first_seen_at` is the earliest first sighting of its members, and it is when the job appeared for matching (`docs/telegram.md`): a subscription that started later than that never gets the job, whichever of its postings arrives. A vacancy that joins a newer cluster can still match a subscription the earlier postings did not, on its own facts (any vacancy of a cluster matches it), but the account's delivery for the cluster is unique, so nothing is sent twice. A vacancy first seen earlier than its cluster, normalized late, moves the cluster's first sighting back, which can put the job before a subscription's start; by the same rule, that job is not news to it.
 
 ## Measurements
 
-Data: the Neon backup of 2026-11-09, 1644 raw items (Djinni 1072, DOU 572) collected 2026-11-05 to 2026-11-09. Every item was normalized with the current parsers and clustered in first-seen order with `pick_cluster`, in memory (`scripts/dedup_sample.py measure`, see [Running it again](#running-it-again)).
+Data: the Neon backup of 2026-11-09, 1644 raw items (Djinni 1072, DOU 572) collected 2026-11-05 to 2026-11-09. Every item was normalized with the current parsers and clustered in first-seen order with `pick_cluster`, in memory (`scripts/dedup_sample.py measure`). `scripts/dedup_sample.py check` runs the real normalization and cluster assignment on a copy of the same backup and gets the same 1565 clusters (see [Running it again](#running-it-again)).
 
 **Result:** 1565 clusters; 77 hold more than one vacancy (75 pairs, 2 triples). 67 join Djinni and DOU, 10 are Djinni reposts. Every cluster whose titles differ was checked by hand, and the others have equal titles and texts that share at least 85%: no wrong merge was found.
 
@@ -73,11 +72,14 @@ Each vacancy keeps its feed title, which public pages show anyway, and the test 
 
 ## Running it again
 
-`scripts/dedup_sample.py` reads a backup of the hosted database (README, *Scheduled collection*) into memory with `pg_restore`. It writes to no database and fetches nothing.
+`scripts/dedup_sample.py` reads a backup of the hosted database (README, *Scheduled collection*) into memory with `pg_restore`. It fetches nothing from a source.
 
 | Task | Command |
 |---|---|
 | Measure the rule (every number on this page) | `uv run python scripts/dedup_sample.py measure BACKUP.dump` |
+| Check that the real cluster assignment gives the same clusters | `uv run python scripts/dedup_sample.py check BACKUP.dump postgresql+psycopg://…/vacancy_radar_dedup_check` |
 | Rebuild the test fixture | `uv run python scripts/dedup_sample.py fixture BACKUP.dump tests/fixtures/dedup/pairs.json` |
+
+`measure` compares every vacancy with every cluster in memory, without the trigram search and the time window of `assign_clusters`. `check` closes that gap: it restores the backup into an empty database whose name ends in `_check` (create it first, e.g. `docker compose exec postgres createdb -U vacancy_radar vacancy_radar_dedup_check`, and drop it after), migrates it, runs `normalize_pending` and `assign_clusters`, and exits 1 if their clusters differ from the in-memory ones. On the 2026-11-09 backup they are the same, and the run took about 40 seconds with normalization.
 
 `pg_restore` must be version 16 or newer; set `PG_RESTORE` if it is not on PATH (Homebrew's `postgresql@16` is keg-only). The fixture command checks every pair's verdict, both from the full vacancies and from the feed titles the test sees, and stops if one is not what `PAIRS` in the script expects. A rebuild uses a new key, so the whole file changes.

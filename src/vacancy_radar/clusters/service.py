@@ -9,77 +9,100 @@ measurements. This module applies it under the stage 8 decisions (PLAN.md):
   job or opens one. Clusters are never merged, and a vacancy's `cluster_id`
   never changes, re-normalization included: a new cluster would mean a new
   delivery, a repeat send.
-- **One run at a time.** A transaction-level advisory lock covers the whole
-  run, and a run that finds it taken does nothing. Two runs at once could
-  otherwise open two clusters for the two halves of one pair.
+- **One run at a time.** A run holds a transaction-level advisory lock until
+  it commits, and a run that finds it taken changes nothing. Two runs at once
+  could otherwise open two clusters for the two halves of one pair.
 - **First seen first.** New vacancies are taken one at a time, in the order
   their raw items were first seen, so the later half of a pair that arrives
-  in the same run finds the earlier one.
-- **Candidates.** A new vacancy is compared only with vacancies whose titles
-  share enough trigrams with its own (`title % :title` at pg_trgm's default
-  threshold of 0.3, served by a GIN index) and that were first seen within
-  `CANDIDATE_WINDOW` of it. `domain.dedup.pick_cluster` then compares it with
-  every member of their clusters.
+  in the same run finds the earlier one. A run takes at most `MAX_PER_RUN`,
+  so a backlog (a rebuild from raw data) is worked off in short transactions.
+- **Candidates.** A new vacancy is compared only with the clusters of
+  vacancies whose titles share enough trigrams with its own (`title % :title`
+  at pg_trgm's default threshold of 0.3, served by a GIN index) and that were
+  first seen within `CANDIDATE_WINDOW` of it. `domain.dedup.pick_cluster`
+  then compares it with every member of those clusters. A run reads each
+  vacancy's facts once, however many new vacancies it is a candidate for.
 
-A cluster's `first_seen_at` is the earliest first sighting of its members, so
-a vacancy that joins an old cluster stays behind the matching watermark and
-sends nothing: it is the same job.
+A cluster's `first_seen_at` is the earliest first sighting of its members.
+Matching takes it as the time the job appeared (`notify/matching.py`).
 """
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from functools import lru_cache
-from typing import Any, Final
+from itertools import batched
+from typing import Final
 
-from sqlalchemy import ColumnElement, Row, func, insert, select, update
-from sqlalchemy.orm import Session
+import structlog
+from sqlalchemy import func, insert, select, update
+from sqlalchemy.orm import Session, load_only
 
 from vacancy_radar.db import locks
 from vacancy_radar.db.models import RawVacancy, Source, Vacancy, VacancyCluster
 from vacancy_radar.domain.dedup import DedupFacts, pick_cluster, shingles
 from vacancy_radar.domain.salary import Salary
 
-# A row of `_fact_rows`. SQLAlchemy types only the first ten columns of a select.
-type FactRow = Row[*tuple[Any, ...]]
+logger = structlog.get_logger("vacancy_radar.clusters")
 
-# How far apart two postings of one job may be first seen. Wider than any
-# repost seen so far, and it keeps each comparison to a month of vacancies.
+# How far apart two postings of one job may be first seen. An assumption, not
+# a measurement: the 2026-11-05..09 sample is four days long, and the longest
+# gap in it (91 hours) says more about the sample than about reposts. To be
+# measured again on a longer sample (PLAN.md, findings PR). A posting further
+# from its twin opens a cluster of its own and is sent again as a new job.
 CANDIDATE_WINDOW: Final = timedelta(days=30)
-# Descriptions whose shingles one run keeps, so a vacancy that is a candidate
-# for many new ones is hashed once. About 30 KB each.
-SHINGLE_CACHE_SIZE: Final = 2000
+# New vacancies one run clusters. Bounds a run's transaction, the time it holds
+# the lock, and the facts it keeps in memory (about 30 KB each).
+MAX_PER_RUN: Final = 1000
+# Ids per `IN (...)` list when facts are read.
+LOAD_BATCH: Final = 1000
 
 
 @dataclass(frozen=True, slots=True)
-class ClusterResult:
+class Clustered:
+    """What a run did. A run that assigned `MAX_PER_RUN` may have left more."""
+
     # Vacancies that matched no cluster and opened their own.
     opened: int = 0
     # Vacancies that joined the cluster of the same job.
     joined: int = 0
-    # Another run held the lock, so this one changed nothing.
-    busy: bool = False
+
+    @property
+    def assigned(self) -> int:
+        return self.opened + self.joined
 
 
-def assign_clusters(session: Session) -> ClusterResult:
-    """Give every vacancy without a cluster one. Does not commit.
+@dataclass(frozen=True, slots=True)
+class Busy:
+    """Another run held the lock, so this one changed nothing."""
 
-    The lock is held until the caller's transaction ends, so commit soon.
+
+def assign_clusters(session: Session, *, limit: int = MAX_PER_RUN) -> Clustered | Busy:
+    """Give up to `limit` vacancies without a cluster one, and commit.
+
+    The lock is taken in the session's transaction and released by the
+    commit, so call this with no other work pending in the session. When the
+    lock is taken, logs `clusters.busy` and returns `Busy` without committing.
     """
     if not session.scalar(select(func.pg_try_advisory_xact_lock(locks.CLUSTER, 0))):
-        return ClusterResult(busy=True)
+        logger.info("clusters.busy")
+        return Busy()
     pending = session.execute(
-        select(Vacancy.id, RawVacancy.first_seen_at)
+        select(Vacancy.id, Vacancy.title, RawVacancy.first_seen_at)
         .join(RawVacancy, RawVacancy.id == Vacancy.raw_vacancy_id)
         .where(Vacancy.cluster_id.is_(None))
         .order_by(RawVacancy.first_seen_at, Vacancy.id)
+        .limit(limit)
     ).all()
-    hashed = lru_cache(maxsize=SHINGLE_CACHE_SIZE)(shingles)
+    facts = _load_facts(session, [vacancy_id for vacancy_id, _, _ in pending])
     opened = joined = 0
-    for vacancy_id, first_seen_at in pending:
-        [new] = _fact_rows(session, Vacancy.id == vacancy_id)
-        cluster_id = _cluster_of(session, new, first_seen_at, hashed)
+    for vacancy_id, title, first_seen_at in pending:
+        members = _candidate_members(session, title=title, first_seen_at=first_seen_at)
+        facts |= _load_facts(session, {m for ids in members.values() for m in ids} - facts.keys())
+        cluster_id = pick_cluster(
+            facts[vacancy_id],
+            {cluster: [facts[member] for member in ids] for cluster, ids in members.items()},
+        )
         if cluster_id is None:
             cluster_id = session.scalars(
                 insert(VacancyCluster)
@@ -97,82 +120,74 @@ def assign_clusters(session: Session) -> ClusterResult:
         session.execute(
             update(Vacancy).where(Vacancy.id == vacancy_id).values(cluster_id=cluster_id)
         )
-    return ClusterResult(opened=opened, joined=joined)
+    session.commit()
+    return Clustered(opened=opened, joined=joined)
 
 
-def candidate_clusters(session: Session, *, title: str, first_seen_at: datetime) -> list[int]:
-    """Clusters with a vacancy whose title shares enough trigrams with `title`.
+def _candidate_members(
+    session: Session, *, title: str, first_seen_at: datetime
+) -> dict[int, list[int]]:
+    """The members of every cluster that has a vacancy like the new one, by cluster id.
 
-    Only vacancies first seen within `CANDIDATE_WINDOW` of `first_seen_at`
-    count. In id order.
+    "Like" means a title that shares enough trigrams with `title` and a first
+    sighting within `CANDIDATE_WINDOW` of `first_seen_at`.
     """
-    found = session.scalars(
+    similar = (
         select(Vacancy.cluster_id)
-        .distinct()
         .join(RawVacancy, RawVacancy.id == Vacancy.raw_vacancy_id)
         .where(
-            Vacancy.cluster_id.is_not(None),
             Vacancy.title.op("%")(title),
             RawVacancy.first_seen_at.between(
                 first_seen_at - CANDIDATE_WINDOW, first_seen_at + CANDIDATE_WINDOW
             ),
         )
-        .order_by(Vacancy.cluster_id)
     )
-    return [cluster_id for cluster_id in found if cluster_id is not None]
+    members: defaultdict[int, list[int]] = defaultdict(list)
+    for vacancy_id, cluster_id in session.execute(
+        select(Vacancy.id, VacancyCluster.id)
+        .join(VacancyCluster, VacancyCluster.id == Vacancy.cluster_id)
+        .where(VacancyCluster.id.in_(similar))
+        .order_by(VacancyCluster.id, Vacancy.id)
+    ):
+        members[cluster_id].append(vacancy_id)
+    return members
 
 
-def _cluster_of(
-    session: Session,
-    new: FactRow,
-    first_seen_at: datetime,
-    hashed: Callable[[str], frozenset[int]],
-) -> int | None:
-    """The cluster the vacancy in `new` joins, or None if it opens one."""
-    candidates = candidate_clusters(session, title=new.title, first_seen_at=first_seen_at)
-    if not candidates:
-        return None
-    members: defaultdict[int, list[DedupFacts]] = defaultdict(list)
-    for member in _fact_rows(session, Vacancy.cluster_id.in_(candidates)):
-        members[member.cluster_id].append(_facts(member, hashed))
-    return pick_cluster(_facts(new, hashed), members)
-
-
-def _fact_rows(session: Session, condition: ColumnElement[bool]) -> Sequence[FactRow]:
-    """The columns deduplication reads, for the vacancies that meet `condition`."""
-    return session.execute(
-        select(
-            Vacancy.id,
-            Vacancy.cluster_id,
-            Source.slug,
-            Vacancy.title,
-            Vacancy.company,
-            Vacancy.cities,
-            Vacancy.seniority,
-            Vacancy.salary_min,
-            Vacancy.salary_max,
-            Vacancy.salary_currency,
-            Vacancy.salary_period,
-            Vacancy.description,
-        )
-        .join(Source, Source.id == Vacancy.source_id)
-        .where(condition)
-        .order_by(Vacancy.id)
-    ).all()
-
-
-def _facts(row: FactRow, hashed: Callable[[str], frozenset[int]]) -> DedupFacts:
-    salary = (
-        None
-        if row.salary_currency is None
-        else Salary(row.salary_min, row.salary_max, row.salary_currency, row.salary_period)
-    )
-    return DedupFacts.of(
-        source=row.slug,
-        title=row.title,
-        company=row.company,
-        cities=row.cities,
-        seniority=row.seniority,
-        salary=salary,
-        shingles=hashed(row.description),
-    )
+def _load_facts(session: Session, ids: Collection[int]) -> dict[int, DedupFacts]:
+    """What deduplication reads from each of the vacancies, by vacancy id."""
+    facts: dict[int, DedupFacts] = {}
+    for batch in batched(sorted(ids), LOAD_BATCH):
+        rows = session.execute(
+            select(Vacancy, Source.slug)
+            .join(Source, Source.id == Vacancy.source_id)
+            .where(Vacancy.id.in_(batch))
+            .options(
+                load_only(
+                    Vacancy.title,
+                    Vacancy.company,
+                    Vacancy.cities,
+                    Vacancy.seniority,
+                    Vacancy.salary_min,
+                    Vacancy.salary_max,
+                    Vacancy.salary_currency,
+                    Vacancy.salary_period,
+                    Vacancy.description,
+                )
+            )
+        ).all()
+        for vacancy, slug in rows:
+            facts[vacancy.id] = DedupFacts.of(
+                source=slug,
+                title=vacancy.title,
+                company=vacancy.company,
+                cities=vacancy.cities,
+                seniority=vacancy.seniority,
+                salary=Salary.from_stored(
+                    vacancy.salary_min,
+                    vacancy.salary_max,
+                    vacancy.salary_currency,
+                    vacancy.salary_period,
+                ),
+                shingles=shingles(vacancy.description),
+            )
+    return facts

@@ -116,7 +116,11 @@ def convert_salaries(
     )
     converted = []
     for row in rows:
-        salary = Salary(row.salary_min, row.salary_max, row.salary_currency, row.salary_period)
+        salary = Salary.from_stored(
+            row.salary_min, row.salary_max, row.salary_currency, row.salary_period
+        )
+        if salary is None:  # needs_conversion() selects only rows with a salary
+            continue
         usd = to_monthly_usd(salary, rates.get(rate_day(row.published_at, row.first_seen_at)))
         if usd is not None:
             converted.append({"id": row.id, **usd_columns(usd)})

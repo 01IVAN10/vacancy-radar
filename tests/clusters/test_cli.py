@@ -10,8 +10,10 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from tests.notify.factories import JOB_TEXT, add_vacancy
+from vacancy_radar.clusters import __main__ as clusters_cli
 from vacancy_radar.clusters.__main__ import main
 from vacancy_radar.db import locks
+from vacancy_radar.db.models import Vacancy
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +48,21 @@ def test_assigns_clusters_and_logs_the_counts(
 
     assert (first["opened"], first["joined"]) == (1, 1)
     assert (second["opened"], second["joined"]) == (0, 0)
+
+
+def test_works_off_a_backlog_in_several_runs(
+    committed_database: Engine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_pair(committed_database)
+    monkeypatch.setattr(clusters_cli, "MAX_PER_RUN", 1)
+
+    assert main([]) == 0
+
+    assigned = events(capsys.readouterr().err)["clusters.assigned"]
+    assert (assigned["opened"], assigned["joined"]) == (1, 1)
+    with committed_database.connect() as connection:
+        unclustered = select(func.count()).select_from(Vacancy).where(Vacancy.cluster_id.is_(None))
+        assert connection.scalar(unclustered) == 0
 
 
 def test_logs_when_another_run_is_clustering(

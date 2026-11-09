@@ -11,13 +11,15 @@ whole run, so a 429 that stops one run is not ignored by another running
 beside it. Claims also use SKIP LOCKED, so even two senders would never take
 the same delivery.
 
-The message shows the most complete vacancy of the cluster: one with a
-salary first, then one with a company, then the one with the lowest id. It is
-chosen when the delivery is claimed, so it always shows a vacancy that still
-exists, and a duplicate from another source that states more can improve it.
+The message shows a vacancy of the cluster that matches one of the
+delivery's subscriptions, so it never contradicts the filter it was sent
+for, and of those the most complete: one with a salary first, then one with
+a company, then the one with the lowest id. If none matches any more (a
+subscription was edited), it shows the most complete one. It is chosen when
+the delivery is claimed, so it always shows a vacancy that still exists.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -29,8 +31,11 @@ from sqlalchemy.orm import Session
 
 from vacancy_radar.db import locks
 from vacancy_radar.db.models import Delivery, Notification, Source, Subscription, User, Vacancy
+from vacancy_radar.domain.matching import VacancyFacts, matches
+from vacancy_radar.domain.subscriptions import SubscriptionFilter
 from vacancy_radar.notify.message import VacancyCard, render_message
 from vacancy_radar.notify.outcome import GiveUp, Outcome, Retry, outcome_of
+from vacancy_radar.subscriptions.service import filter_of
 from vacancy_radar.telegram.client import TelegramClient
 from vacancy_radar.telegram.linking import forget_chat
 
@@ -154,30 +159,40 @@ def claim_next(session: Session, *, now: datetime) -> ClaimedDelivery | None:
         .values(status="sending", attempts=Delivery.attempts + 1, claimed_at=now)
         .returning(Delivery.attempts, Delivery.user_id, Delivery.cluster_id)
     ).one()
-    names = session.scalars(
-        select(Subscription.name)
+    subscriptions = session.scalars(
+        select(Subscription)
         .join(Notification, Notification.subscription_id == Subscription.id)
         .where(Notification.delivery_id == delivery_id)
         .order_by(Subscription.name)
     ).all()
     chat_id = session.scalar(select(User.telegram_chat_id).where(User.id == user_id))
-    card = _card(session, cluster_id)
+    card = _card(session, cluster_id, [filter_of(row) for row in subscriptions])
     session.commit()
-    return ClaimedDelivery(delivery_id, attempts, chat_id, card, tuple(names))
+    names = tuple(row.name for row in subscriptions)
+    return ClaimedDelivery(delivery_id, attempts, chat_id, card, names)
 
 
-def _card(session: Session, cluster_id: int) -> VacancyCard | None:
-    found = session.execute(
+def _card(
+    session: Session, cluster_id: int, filters: Sequence[SubscriptionFilter]
+) -> VacancyCard | None:
+    """The vacancy of the cluster the message shows; see the module docstring."""
+    members = session.execute(
         select(Vacancy, Source.name)
         .join(Source, Source.id == Vacancy.source_id)
         .where(Vacancy.cluster_id == cluster_id)
         # False sorts before true: vacancies with a salary, then with a company.
         .order_by(Vacancy.salary_currency.is_(None), Vacancy.company.is_(None), Vacancy.id)
-        .limit(1)
-    ).first()
-    if found is None:
+    ).all()
+    if not members:
         return None
-    vacancy, source_name = found
+    vacancy, source_name = next(
+        (
+            member
+            for member in members
+            if any(matches(criteria, _facts(member[0])) for criteria in filters)
+        ),
+        members[0],
+    )
     return VacancyCard(
         title=vacancy.title,
         url=vacancy.url,
@@ -191,6 +206,16 @@ def _card(session: Session, cluster_id: int) -> VacancyCard | None:
         seniority=tuple(vacancy.seniority),
         work_formats=tuple(vacancy.work_formats),
         skills=tuple(vacancy.skills),
+    )
+
+
+def _facts(vacancy: Vacancy) -> VacancyFacts:
+    return VacancyFacts.from_stored(
+        skills=vacancy.skills,
+        seniority=vacancy.seniority,
+        work_formats=vacancy.work_formats,
+        salary_usd_min=vacancy.salary_usd_min,
+        salary_usd_max=vacancy.salary_usd_max,
     )
 
 

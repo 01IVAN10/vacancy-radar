@@ -344,3 +344,20 @@ def test_currency_of(word: str, expected: str) -> None:
 def test_currency_of_rejects_unknown_words() -> None:
     with pytest.raises(ValueError, match="not a currency"):
         currency_of("zł")
+
+
+# --- stored rows ------------------------------------------------------------------
+
+
+def test_a_stored_salary_comes_back_typed() -> None:
+    assert Salary.from_stored(40_000, None, "UAH", "month") == Salary(40_000, None, "UAH")
+    assert Salary.from_stored(None, None, None, None) is None
+
+
+@pytest.mark.parametrize(
+    ("currency", "period"),
+    [pytest.param("GBP", "month", id="currency"), pytest.param("USD", "week", id="period")],
+)
+def test_a_stored_salary_refuses_values_the_database_keeps_out(currency: str, period: str) -> None:
+    with pytest.raises(ValueError, match="is not one of"):
+        Salary.from_stored(1000, 2000, currency, period)

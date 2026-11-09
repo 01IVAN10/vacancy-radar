@@ -5,8 +5,12 @@ A cluster is a candidate for a subscription when all of these hold:
 - the subscription is active and its account has a linked chat;
 - the cluster was first seen after both the subscription became active and
   the chat was linked (the watermark), so neither creating a subscription
-  nor linking a chat sends what was collected before;
-- it was first seen within `LOOKBACK`, which bounds the work of each run;
+  nor linking a chat sends a job that appeared before;
+- the vacancy, not its cluster, was first seen within `LOOKBACK`, which
+  bounds the work of each run. A cluster matches when any of its vacancies
+  does, so a vacancy that joins a cluster days later (the same job on
+  another site, stating a format or salary the first posting did not) is
+  still matched on its own facts;
 - the vacancy is ready: its salary needs no conversion to dollars
   (`normalize.service.needs_conversion`), or `CONVERSION_GRACE` has passed
   since it was normalized. Otherwise a salary not yet converted would read
@@ -16,7 +20,8 @@ A cluster is a candidate for a subscription when all of these hold:
 The decision itself is `domain.matching.matches`. Each match becomes a
 `notification` row, attached to the account's `delivery` for the cluster,
 which is created on the first match. A subscription that matches after the
-message went out joins the delivery that was sent and sends nothing.
+message went out, through an edit or a new vacancy of the cluster, joins the
+delivery that was sent and sends nothing.
 
 A candidate that does not match is looked at again by every run within the
 lookback, so a vacancy whose salary is converted later can still match.
@@ -35,6 +40,7 @@ from sqlalchemy.orm import Session
 from vacancy_radar.db.models import (
     Delivery,
     Notification,
+    RawVacancy,
     Subscription,
     User,
     Vacancy,
@@ -99,13 +105,17 @@ def _matches(session: Session, *, now: datetime) -> Iterator[Match]:
         .join(User, User.id == Subscription.user_id)
         .join(
             VacancyCluster,
-            and_(
-                VacancyCluster.first_seen_at
-                >= func.greatest(Subscription.active_since, User.telegram_linked_at),
-                VacancyCluster.first_seen_at >= now - LOOKBACK,
-            ),
+            VacancyCluster.first_seen_at
+            >= func.greatest(Subscription.active_since, User.telegram_linked_at),
         )
         .join(Vacancy, Vacancy.cluster_id == VacancyCluster.id)
+        .join(
+            RawVacancy,
+            and_(
+                RawVacancy.id == Vacancy.raw_vacancy_id,
+                RawVacancy.first_seen_at >= now - LOOKBACK,
+            ),
+        )
         .where(Subscription.is_active, User.telegram_chat_id.is_not(None), ready, ~already_matched)
         .order_by(VacancyCluster.first_seen_at, Vacancy.id, Subscription.id)
     )

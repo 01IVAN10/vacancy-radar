@@ -2,7 +2,8 @@
 
 Gives every vacancy without a cluster one, as `notify.match` does before it
 matches (see `clusters.service`), and logs how many joined a cluster and how
-many opened their own. Useful after a rebuild from raw data, or to see what
+many opened their own. A backlog, such as a rebuild from raw data, is worked
+off in runs of `MAX_PER_RUN`, each committed on its own. Useful to see what
 deduplication does without sending anything.
 """
 
@@ -12,7 +13,7 @@ from collections.abc import Sequence
 
 import structlog
 
-from vacancy_radar.clusters.service import assign_clusters
+from vacancy_radar.clusters.service import MAX_PER_RUN, Busy, assign_clusters
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.engine import get_sessionmaker
 from vacancy_radar.log import configure_logging
@@ -27,14 +28,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     ).parse_args(argv)
     configure_logging(get_settings().log_level)
 
+    opened = joined = 0
     with get_sessionmaker()() as session:
-        result = assign_clusters(session)
-        session.commit()
-
-    if result.busy:
-        logger.info("clusters.busy")
-    else:
-        logger.info("clusters.assigned", opened=result.opened, joined=result.joined)
+        while True:
+            run = assign_clusters(session, limit=MAX_PER_RUN)
+            if isinstance(run, Busy):
+                return 0  # `clusters.busy` is logged by the service
+            opened += run.opened
+            joined += run.joined
+            if run.assigned < MAX_PER_RUN:
+                break
+    logger.info("clusters.assigned", opened=opened, joined=joined)
     return 0
 
 
