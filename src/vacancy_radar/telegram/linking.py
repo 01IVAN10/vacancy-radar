@@ -14,6 +14,11 @@ a database dump holds no usable link.
 
 The web app calls the async functions and the bot process the sync ones,
 each on its own engine, as everywhere else in the project.
+
+Every way a chat stops being linked to an account logs `telegram.unlinked`
+with the account and `via`: the site's Unlink button, the bot's `/stop`, the
+chat moving to another account, or Telegram refusing a message (the user
+blocked the bot or the chat is gone).
 """
 
 import hashlib
@@ -21,15 +26,18 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import Final
+from typing import Final, Literal
 from urllib.parse import urlencode
 
+import structlog
 from sqlalchemy import delete, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from vacancy_radar.db.models import TelegramLinkToken, User
+
+logger = structlog.get_logger("vacancy_radar.telegram")
 
 LINK_TOKEN_TTL: Final = timedelta(minutes=15)
 # 32 random bytes are 43 URL-safe characters, inside Telegram's limit of 64
@@ -39,6 +47,9 @@ TOKEN_BYTES: Final = 32
 # The columns of an account without a chat. The CHECK `telegram_linked` makes
 # both NULL or neither, so every unlink writes them through this one value.
 UNLINKED: Final = MappingProxyType({"telegram_chat_id": None, "telegram_linked_at": None})
+
+# What unlinked a chat, for the `telegram.unlinked` log line.
+UnlinkedVia = Literal["site", "bot", "moved", "blocked"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,8 +97,15 @@ async def issue_link_token(session: AsyncSession, user_id: int, *, now: datetime
 
 async def unlink_user(session: AsyncSession, user_id: int) -> None:
     """Forget the account's chat, and commit. Nothing more is sent there."""
-    await session.execute(update(User).where(User.id == user_id).values(**UNLINKED))
+    unlinked = await session.scalar(
+        update(User)
+        .where(User.id == user_id, User.telegram_chat_id.is_not(None))
+        .values(**UNLINKED)
+        .returning(User.id)
+    )
     await session.commit()
+    if unlinked is not None:
+        _log_unlinked(unlinked, via="site")
 
 
 # --- bot (sync) ---------------------------------------------------------------
@@ -125,19 +143,28 @@ def link_chat(session: Session, token: str, chat_id: int, *, now: datetime) -> L
         .returning(User.email)
     ).scalar_one()
     session.commit()
+    if previous_owner is not None:
+        _log_unlinked(previous_owner, via="moved")
     return Linked(email=email, moved_from_another_account=previous_owner is not None)
 
 
-def unlink_chat(session: Session, chat_id: int) -> bool:
+def unlink_chat(session: Session, chat_id: int, *, via: UnlinkedVia) -> bool:
     """Forget the chat on whichever account has it, and commit. False if none had it."""
-    unlinked = forget_chat(session, chat_id)
+    unlinked = forget_chat(session, chat_id, via=via)
     session.commit()
     return unlinked
 
 
-def forget_chat(session: Session, chat_id: int) -> bool:
+def forget_chat(session: Session, chat_id: int, *, via: UnlinkedVia) -> bool:
     """`unlink_chat` without the commit, for callers with a transaction of their own."""
     unlinked = session.scalar(
         update(User).where(User.telegram_chat_id == chat_id).values(**UNLINKED).returning(User.id)
     )
-    return unlinked is not None
+    if unlinked is None:
+        return False
+    _log_unlinked(unlinked, via=via)
+    return True
+
+
+def _log_unlinked(user_id: int, *, via: UnlinkedVia) -> None:
+    logger.info("telegram.unlinked", user=user_id, via=via)

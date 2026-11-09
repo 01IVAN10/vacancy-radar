@@ -1,10 +1,13 @@
+from collections.abc import MutableMapping
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
 from vacancy_radar.db.models import TelegramLinkToken, User
 from vacancy_radar.telegram.linking import (
@@ -46,6 +49,10 @@ def add_token(session: Session, user: User, *, expires_at: datetime | None = Non
 def reloaded(session: Session, user: User) -> User:
     session.refresh(user)
     return user
+
+
+def unlinked_logs(logs: list[MutableMapping[str, Any]]) -> list[MutableMapping[str, Any]]:
+    return [log for log in logs if log["event"] == "telegram.unlinked"]
 
 
 # --- tokens and links -----------------------------------------------------------
@@ -122,7 +129,8 @@ async def test_unlinking_from_the_site(async_session: AsyncSession) -> None:
     user.telegram_chat_id, user.telegram_linked_at = CHAT, NOW
     await async_session.commit()
 
-    await unlink_user(async_session, user.id)
+    with capture_logs() as logs:
+        await unlink_user(async_session, user.id)
 
     stored = (
         await async_session.execute(
@@ -130,6 +138,21 @@ async def test_unlinking_from_the_site(async_session: AsyncSession) -> None:
         )
     ).one()
     assert tuple(stored) == (None, None)
+    assert unlinked_logs(logs) == [
+        {"event": "telegram.unlinked", "user": user.id, "via": "site", "log_level": "info"}
+    ]
+
+
+@pytest.mark.anyio
+async def test_unlinking_an_account_without_a_chat_logs_nothing(
+    async_session: AsyncSession,
+) -> None:
+    user = await add_async_user(async_session)
+
+    with capture_logs() as logs:
+        await unlink_user(async_session, user.id)
+
+    assert unlinked_logs(logs) == []
 
 
 # --- bot side (sync) ----------------------------------------------------------------
@@ -179,9 +202,13 @@ def test_a_chat_linked_to_another_account_moves(db_session: Session) -> None:
     second = add_user(db_session, "second@example.com")
     link_chat(db_session, add_token(db_session, first), CHAT, now=NOW)
 
-    assert link_chat(db_session, add_token(db_session, second), CHAT, now=NOW) == Linked(
-        email="second@example.com", moved_from_another_account=True
-    )
+    with capture_logs() as logs:
+        linked = link_chat(db_session, add_token(db_session, second), CHAT, now=NOW)
+
+    assert linked == Linked(email="second@example.com", moved_from_another_account=True)
+    assert unlinked_logs(logs) == [
+        {"event": "telegram.unlinked", "user": first.id, "via": "moved", "log_level": "info"}
+    ]
     assert reloaded(db_session, first).telegram_chat_id is None
     assert reloaded(db_session, first).telegram_linked_at is None
     assert reloaded(db_session, second).telegram_chat_id == CHAT
@@ -203,10 +230,16 @@ def test_unlinking_a_chat(db_session: Session) -> None:
     user = add_user(db_session)
     link_chat(db_session, add_token(db_session, user), CHAT, now=NOW)
 
-    assert unlink_chat(db_session, CHAT)
-    assert not unlink_chat(db_session, CHAT)
+    with capture_logs() as logs:
+        assert unlink_chat(db_session, CHAT, via="bot")
+        assert not unlink_chat(db_session, CHAT, via="bot")
+
     linked = reloaded(db_session, user)
     assert (linked.telegram_chat_id, linked.telegram_linked_at) == (None, None)
+    # Only the call that unlinked something is logged.
+    assert unlinked_logs(logs) == [
+        {"event": "telegram.unlinked", "user": user.id, "via": "bot", "log_level": "info"}
+    ]
 
 
 def test_a_chat_belongs_to_one_account(db_session: Session) -> None:

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
 from vacancy_radar.db.models import TelegramLinkToken, User
 from vacancy_radar.telegram.bot import handle_update
@@ -103,12 +104,14 @@ def test_anything_else_gets_the_help(db_session: Session, text: str) -> None:
 def test_stop_unlinks_the_chat(db_session: Session, user: User) -> None:
     answer(db_session, f"/start {add_token(db_session, user)}")
 
-    reply = answer(db_session, "/stop")
+    with capture_logs() as logs:
+        reply = answer(db_session, "/stop")
 
     assert reply is not None
     assert "unlinked" in reply
     db_session.refresh(user)
     assert user.telegram_chat_id is None
+    assert [(log["event"], log["via"]) for log in logs] == [("telegram.unlinked", "bot")]
 
 
 def test_stop_in_a_chat_that_is_not_linked(db_session: Session) -> None:

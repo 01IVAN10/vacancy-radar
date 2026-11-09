@@ -7,6 +7,7 @@ import httpx
 import pytest
 import respx
 from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
 from tests.support import fixture_bytes
 from vacancy_radar.telegram.client import (
@@ -186,3 +187,34 @@ def test_a_rejected_token_ends_polling(
 
     with pytest.raises(TelegramUnauthorizedError):
         poll_forever(client, sessions, site_url=SITE, stop=Event(), pause=lambda _: None)
+
+
+@pytest.mark.parametrize(
+    ("response", "event", "level"),
+    [
+        # Transient: a network error or a 5xx usually passes by the next poll.
+        (httpx.ConnectError("down"), "telegram.poll_failed", "warning"),
+        (httpx.Response(502), "telegram.poll_failed", "warning"),
+        # Lasting until someone looks: a second bot process, or a request Telegram refuses.
+        (fixture("conflict", 409), "telegram.poll_conflict", "error"),
+        (fixture("chat_not_found", 400), "telegram.poll_failed", "error"),
+    ],
+)
+def test_a_failed_poll_is_logged_by_whether_it_passes_by_itself(
+    api: respx.MockRouter,
+    client: TelegramClient,
+    sessions: Sessions,
+    response: httpx.Response | Exception,
+    event: str,
+    level: str,
+) -> None:
+    stop = Event()
+    if isinstance(response, Exception):
+        api.post("/getUpdates").mock(side_effect=response)
+    else:
+        api.post("/getUpdates").mock(return_value=response)
+
+    with capture_logs() as logs:
+        poll_forever(client, sessions, site_url=SITE, stop=stop, pause=StopAfter(stop, 1))
+
+    assert [(log["event"], log["log_level"]) for log in logs] == [(event, level)]

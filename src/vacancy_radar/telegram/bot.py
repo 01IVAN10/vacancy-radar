@@ -49,7 +49,7 @@ def handle_update(session: Session, update: Update, *, now: datetime, site_url: 
             f"{moved}Send /stop to unlink it."
         )
     if command == "/stop":
-        if unlink_chat(session, message.chat.id):
+        if unlink_chat(session, message.chat.id, via="bot"):
             return (
                 "This chat is unlinked, and nothing more will be sent here. "
                 f"Link it again on {page}."
