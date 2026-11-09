@@ -204,6 +204,9 @@ class Vacancy(Base):
     work_formats: Mapped[list[str]] = mapped_column(ARRAY(Text))
     # Slugs from `domain/skills.py`. The GIN index comes in stage 9, measured.
     skills: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    # Plain text of the source's description, for deduplication and search.
+    # Pages show only an excerpt of it and link to the original.
+    description: Mapped[str] = mapped_column(Text)
     normalizer_version: Mapped[int] = mapped_column(SmallInteger)
     raw_updated_at: Mapped[datetime]
     normalized_at: Mapped[datetime] = mapped_column(server_default=func.now())

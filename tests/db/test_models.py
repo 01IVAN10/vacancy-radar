@@ -235,6 +235,7 @@ def test_vacancy_dollar_range_cannot_start_above_its_end(db_session: Session) ->
             seniority=[],
             work_formats=[],
             skills=[],
+            description="",
             normalizer_version=2,
             raw_updated_at=datetime.now(UTC),
         )

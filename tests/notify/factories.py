@@ -76,6 +76,7 @@ def add_vacancy(
     title: str = "Python Developer",
     company: str | None = None,
     skills: list[str] | None = None,
+    description: str = "",
     **columns: Any,
 ) -> Vacancy:
     """A normalized Djinni vacancy whose raw item was first seen at `first_seen_at`.
@@ -103,6 +104,7 @@ def add_vacancy(
         skills=["python"] if skills is None else skills,
         seniority=[],
         work_formats=[],
+        description=description,
         normalizer_version=NORMALIZER_VERSION,
         raw_updated_at=first_seen_at,
         normalized_at=normalized_at,

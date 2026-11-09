@@ -230,6 +230,7 @@ def vacancy_values(row: Row[Any], vacancy: NormalizedVacancy) -> dict[str, Any]:
         "seniority": list(vacancy.seniority),
         "work_formats": list(vacancy.work_formats),
         "skills": list(vacancy.skills),
+        "description": vacancy.description,
         "normalizer_version": NORMALIZER_VERSION,
         "raw_updated_at": row.updated_at,
     }

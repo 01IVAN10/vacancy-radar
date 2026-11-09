@@ -40,6 +40,9 @@ Normalization does not run in the GitHub Actions job yet. Neon only accumulates 
 | `seniority` | title | position |
 | `work_formats` | title + description | position + description + title flags (`віддалено`, `гібрид`) |
 | `skills` | title + description | position + description |
+| `description` | description as plain text | description as plain text |
+
+`description` is stored for deduplication (stage 8) and search (stage 9). Public pages never show it in full: they show an excerpt and link to the original (`CLAUDE.md`, legal data collection). Rows written before `NORMALIZER_VERSION` 3 have an empty description until they are rebuilt.
 
 All text first goes through `domain/text.py`: HTML to text, entities unescaped (also double-escaped ones), NFKC (Unicode bold letters become plain), and whitespace collapsed.
 
