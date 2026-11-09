@@ -1,6 +1,6 @@
 # Deduplication
 
-One job is often posted on Djinni and on DOU, and Djinni jobs are reposted under new ids. Deduplication groups such postings into one *cluster*, so a subscriber gets one message per job and analytics count the job once. The rule is `domain/dedup.py`: pure functions with no I/O. Until the cluster assignment uses it (stage 8, next PR), every vacancy is still a cluster of its own (`clusters/service.py`).
+One job is often posted on Djinni and on DOU, and Djinni jobs are reposted under new ids. Deduplication groups such postings into one *cluster*, so a subscriber gets one message per job and analytics count the job once. The rule is `domain/dedup.py`: pure functions with no I/O. `clusters/service.py` applies it to new vacancies (see [How it runs](#how-it-runs)).
 
 The rule is conservative on purpose. A wrong merge hides a vacancy from subscribers, because a cluster is sent once; a missed duplicate only sends the same job twice.
 
@@ -22,6 +22,18 @@ Two vacancies are the same job when no veto applies and both their titles and th
 **Shingles** (`shingles`) are every run of 4 consecutive words of the plain description, casefolded, each as a 32-bit BLAKE2b hash. The hashes are only computed and compared, never stored. They do not hide the text: neighbouring shingles share three words, so a description can be rebuilt from its hashes by trying one word at a time. A set of hashes that is published must use a secret key that is then thrown away (`shingles(text, key=...)`); the similarity stays the same. Descriptions with fewer than 20 shingles are never similar to anything.
 
 **Clusters** (`pick_cluster`). A new vacancy joins a cluster only when it is the same job as *every* member (complete linkage), so a chain of near matches cannot pull two different jobs together. If several clusters qualify, it joins the one whose least similar member is most similar, and of equals the oldest. Clusters are never merged afterwards (PLAN.md, stage 8 decisions).
+
+## How it runs
+
+`assign_clusters` (`clusters/service.py`) gives every vacancy without a cluster one. `notify.match` runs it before matching, every 5 minutes, and `python -m vacancy_radar.clusters` runs it by hand and logs `clusters.assigned` with how many vacancies opened a cluster and how many joined one.
+
+- **Attach-only.** A new vacancy joins an existing cluster or opens one. Clusters are never merged, and a vacancy keeps its cluster for good, re-normalization included, because a new cluster would mean a new delivery and a repeat message (PLAN.md, stage 8 decisions).
+- **One run at a time.** A run holds a transaction-level advisory lock (`db/locks.py`, `CLUSTER`) until it commits. A run that finds it taken does nothing and logs `clusters.busy`; `notify.match` then matches what is clustered already.
+- **First seen first.** New vacancies are taken one at a time in the order their raw items were first seen, so the later half of a pair that arrives in the same run finds the earlier one, and the earlier one opens the cluster.
+- **Candidates.** A new vacancy is compared only with vacancies whose titles share enough trigrams with its own (`title % :title`, pg_trgm's default threshold of 0.3, GIN index `ix_vacancy_title_trgm`) and that were first seen within 30 days of it. Then `pick_cluster` compares it with every member of their clusters. The trigram search finds every duplicate pair of the test sample (`test_candidates_include_every_duplicate_pair_of_the_sample`).
+- **First sighting.** A cluster's `first_seen_at` is the earliest first sighting of its members. A vacancy that joins an old cluster stays behind the matching watermark (`docs/telegram.md`), so the same job is not sent again.
+
+Checked end to end on 2026-11-09: the backup restored into a throwaway local database, migrated, normalized, and clustered with `python -m vacancy_radar.clusters` gave the measured result exactly (1565 clusters, 77 with several vacancies, 67 of them Djinni + DOU) in about 14 seconds for 1644 vacancies. A second run changed nothing, and rebuilding every vacancy kept every cluster.
 
 ## Measurements
 

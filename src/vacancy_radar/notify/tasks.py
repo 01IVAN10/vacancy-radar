@@ -1,10 +1,12 @@
 """Celery tasks for notifications: thin wrappers around the plain functions.
 
-`notify.match` clusters new vacancies and records the matches. It also warns
-(`notify.stuck_deliveries`) about deliveries a dead worker left `sending`. `notify.send`
-sends the due deliveries; Beat sends it every minute. It has no Celery retries:
-a delivery that has to wait carries its own `next_attempt_at`, and the first
-run after that sends it. One run sends at a time (`sender_lock`).
+`notify.match` clusters new vacancies (`clusters.service`) and records the
+matches; if another run is clustering, it matches what is clustered already.
+It also warns (`notify.stuck_deliveries`) about deliveries a dead worker left
+`sending`. `notify.send` sends the due deliveries; Beat sends it every minute.
+It has no Celery retries: a delivery that has to wait carries its own
+`next_attempt_at`, and the first run after that sends it. One run sends at a
+time (`sender_lock`).
 """
 
 from dataclasses import asdict
@@ -32,13 +34,15 @@ NOTIFY_SEND: Final = "notify.send"
 def match_task() -> dict[str, int]:
     """Cluster new vacancies, then record their matches and queue deliveries."""
     with get_sessionmaker()() as session:
-        clustered = assign_clusters(session)
+        clusters = assign_clusters(session)
         session.commit()
         now = datetime.now(UTC)
         result = match_new(session, now=now)
         session.commit()
         stuck = count_stuck(session, now=now)
-    summary = {"clustered": clustered, **asdict(result)}
+    if clusters.busy:
+        logger.info("clusters.busy")
+    summary = {"opened": clusters.opened, "joined": clusters.joined, **asdict(result)}
     logger.info("notify.matched", **summary)
     if stuck:
         # Left `sending` by a worker that died mid-send; never sent again.

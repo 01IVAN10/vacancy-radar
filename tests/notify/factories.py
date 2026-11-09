@@ -7,7 +7,7 @@ a unique company, so no clustering rule can take two of them for the same job.
 
 from datetime import UTC, datetime, timedelta
 from itertools import count
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,14 @@ LINKED_AT = NOW - timedelta(days=1)
 CHAT_ID = 123456789
 
 _ids = count(1)
+# The default company of `add_vacancy`: one of its own for every vacancy.
+UNIQUE_COMPANY: Final = "<unique>"
+# A description long enough for deduplication to compare (57 shingles).
+JOB_TEXT: Final = " ".join(f"word{n}" for n in range(60))
+JOB_URLS: Final = {
+    "djinni": "https://djinni.co/jobs/{}/",
+    "dou": "https://jobs.dou.ua/vacancies/{}/",
+}
 
 
 def add_user(
@@ -74,19 +82,21 @@ def add_vacancy(
     first_seen_at: datetime = NOW - timedelta(hours=2),
     normalized_at: datetime = NOW - timedelta(hours=2),
     title: str = "Python Developer",
-    company: str | None = None,
+    company: str | None = UNIQUE_COMPANY,
     skills: list[str] | None = None,
     description: str = "",
+    source: str = "djinni",
     **columns: Any,
 ) -> Vacancy:
-    """A normalized Djinni vacancy whose raw item was first seen at `first_seen_at`.
+    """A normalized vacancy whose raw item was first seen at `first_seen_at`.
 
-    `company` defaults to one unique to this vacancy.
+    `company` defaults to one unique to this vacancy; None leaves it unknown,
+    as Djinni does.
     """
     external_id = str(next(_ids))
-    url = f"https://djinni.co/jobs/{external_id}/"
+    url = JOB_URLS[source].format(external_id)
     raw = RawVacancy(
-        source_id=ensure_source(session, ADAPTERS["djinni"]),
+        source_id=ensure_source(session, ADAPTERS[source]),
         external_id=external_id,
         url=url,
         payload={},
@@ -99,7 +109,7 @@ def add_vacancy(
         source_id=raw.source_id,
         url=url,
         title=title,
-        company=f"Company {external_id}" if company is None else company,
+        company=f"Company {external_id}" if company == UNIQUE_COMPANY else company,
         cities=["Kyiv"],
         skills=["python"] if skills is None else skills,
         seniority=[],

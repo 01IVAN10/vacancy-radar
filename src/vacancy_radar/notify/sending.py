@@ -11,8 +11,10 @@ whole run, so a 429 that stops one run is not ignored by another running
 beside it. Claims also use SKIP LOCKED, so even two senders would never take
 the same delivery.
 
-The message shows the cluster's vacancy with the lowest id, chosen when the
-delivery is claimed, so it always shows a vacancy that still exists.
+The message shows the most complete vacancy of the cluster: one with a
+salary first, then one with a company, then the one with the lowest id. It is
+chosen when the delivery is claimed, so it always shows a vacancy that still
+exists, and a duplicate from another source that states more can improve it.
 """
 
 from collections.abc import Callable, Iterator
@@ -169,7 +171,8 @@ def _card(session: Session, cluster_id: int) -> VacancyCard | None:
         select(Vacancy, Source.name)
         .join(Source, Source.id == Vacancy.source_id)
         .where(Vacancy.cluster_id == cluster_id)
-        .order_by(Vacancy.id)
+        # False sorts before true: vacancies with a salary, then with a company.
+        .order_by(Vacancy.salary_currency.is_(None), Vacancy.company.is_(None), Vacancy.id)
         .limit(1)
     ).first()
     if found is None:
