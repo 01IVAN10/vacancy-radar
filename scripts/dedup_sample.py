@@ -280,7 +280,9 @@ def copy_rows(backup: Path, table: str) -> list[list[str]]:
     ).stdout
     rows: list[list[str]] = []
     inside = False
-    for line in dump.splitlines():
+    # COPY ends rows with "\n" only; splitlines() would also split on U+2028 and
+    # other separators that COPY leaves unescaped inside descriptions.
+    for line in dump.split("\n"):
         if line.startswith("COPY "):
             inside = True
         elif inside and line == "\\.":
