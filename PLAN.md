@@ -6,9 +6,9 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 
 ## Current state
 
-Updated 2026-11-09.
+Updated 2026-11-13.
 
-- **Stage 3** is done except for verification. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`).
+- **Stage 3** is done. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`). A week of runs (2026-11-06 to 11-12) missed no items; Djinni is fetched every 30 minutes with a wide margin, DOU mostly every 45 with a thin one at the weekday peak (`docs/collection.md`, Measured).
 - **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
 - **Stage 5** is done: `raw_vacancy` is normalized into `vacancy` (salary in its currency and in monthly USD, seniority, work format, skills, DOU company and places) by `python -m vacancy_radar.normalize` and the Celery task `normalize.pending`. See `docs/normalization.md`. It runs locally only. Neon keeps accumulating raw data, and vacancies are rebuilt from it on the VPS (stage 11).
 - **Stage 6** is done: accounts with sign-in and CSRF protection (`docs/auth.md`), and subscription pages at `/subscriptions` (`docs/subscriptions.md`).
@@ -17,7 +17,8 @@ Updated 2026-11-09.
 - **Before stage 8:** the architecture review of `main` (2026-11-08) is done. Its prep PRs are merged: a CI gate for `domain/` coverage ≥ 90% (#28), clustering in its own package `clusters/` with notify tests independent of it (#29), and the stage 8 rules below.
 - **Stage 8** is done: vacancies keep their plain description (#33), the same-job rule is measured on real data (#34, `domain/dedup.py`), and `notify.match` puts each new vacancy into the cluster of the same job (`clusters/service.py`, `docs/deduplication.md`). On the 2026-11-09 sample, 77 jobs were posted twice or three times, 67 of them on both Djinni and DOU. It runs locally only; Neon keeps collecting raw data, and the VPS clusters it in stage 11.
 - **Problems on the way (stage 8):** the first test fixture stored plain shingle hashes, which can be turned back into DOU descriptions word by word; it now uses hashes made with a key that was thrown away, the branch was force-pushed, and GitHub Support is asked to purge the old commit. Title words dropped `#`, `+` and numbers, so "C#" and "C++", or "Level 1" and "Level 2", looked like one job; symbols and numbers now stay. Matching's lookback counted from the cluster, so a duplicate that arrived more than 2 days later was never matched on its own facts; it now counts from each vacancy. Docker Desktop containers had no internet while the Mac was on a phone hotspot.
-- **Next:** stage 9 (search and analytics). In parallel, the findings PR (`chore/collection-findings`), not before ~2026-11-11, after at least 5 days that include a weekend. It runs the queries in `docs/collection.md`, writes the measured intervals into `docs/sources.md`, closes open question 3, and ticks "Verify data arrives over several days". It also measures how far apart reposts of one job are, to check the 30-day candidate window of deduplication (`scripts/dedup_sample.py measure` on a new backup).
+- **Problems on the way (findings, 2026-11-13):** GitHub's backup `schedule` started 25 runs in six days against cron-job.org's 615, so the job starts every 15 minutes, and DOU's 30-minute `min_interval` turns into 45 minutes whenever a start comes a few seconds early. Deduplication now depends on arrival order in two cases where one posting matches two twins the rule keeps apart; no different jobs are merged either way (`docs/deduplication.md`, Arrival order). `scripts/dedup_sample.py` split COPY rows on U+2028 inside descriptions.
+- **Next:** `fix/dou-due-wait`: when DOU is due within a couple of minutes, the collector waits for it instead of skipping to the next start, so DOU is fetched every ~30 minutes without ever breaking the consent's 30-minute minimum. Then stage 9 (search and analytics).
 
 ## Phase A: Start accumulating data
 
@@ -57,7 +58,7 @@ Outcome: Djinni is the first source. DOU's terms require consent for automated c
 - [x] Schedule every 15 min; each source is fetched only when its `min_interval` has passed
 - [x] Run log `collect_run` (status, counts, error per attempt) + checking queries in `docs/collection.md`
 - [x] External trigger (cron-job.org → `workflow_dispatch`), because GitHub drops scheduled runs
-- [ ] Verify data arrives over several days
+- [x] Verify data arrives over several days
 
 Decision (2026-11-05): Neon Free, Postgres 16, region `eu-central-1`. It has 1 GB of storage per project and 100 CU-hours a month, which is enough for about 30 CU-hours a month of collection. It has no inactivity pause and accepts IPv4 connections from GitHub runners. Supabase Free has 500 MB, pauses after 7 days of inactivity, and accepts direct connections only over IPv6. Postgres 16 matches the VPS, so `pg_dump` → `pg_restore` works in stage 11. Migrations run as the first step of every scheduled job.
 
@@ -141,7 +142,7 @@ Decisions (2026-11-09, measured on the Neon backup of that day, details in `docs
 - **The message shows the most complete vacancy** of the cluster (salary, then company, then lowest id) among those that match one of the delivery's subscriptions, picked when the delivery is claimed (found in review: the fullest vacancy may state a format the subscription rules out).
 - **Matching's lookback counts from each vacancy, the watermark from its cluster** (found in review). A vacancy that joins a cluster more than 2 days after its first posting is matched on its own facts, so "any vacancy of a cluster matches" holds; a job that appeared before a subscription is still never sent to it, and the unique delivery keeps it from being sent twice. In the sample, 11 of 79 later postings arrived more than 2 days after their cluster's first one (longest gap 91 hours), 6 of them from the other site and 2 of those with another work format.
 - **Runs of at most 1000 vacancies, each committed on its own,** so a rebuild from raw data does not hold the lock for one long transaction. A run reads each vacancy's facts once. `scripts/dedup_sample.py check` runs the real code on a copy of a backup and compares it with the measurement.
-- **The 30-day candidate window is an assumption.** The four-day sample cannot show how far apart reposts are; the findings PR measures it on the longer data.
+- **The 30-day candidate window is an assumption.** The four-day sample cannot show how far apart reposts are. (2026-11-13: the longest gap grew to 159 hours in seven days, so it stays an assumption until a month of data can be measured in stage 11.)
 - **No exact fingerprint and no rapidfuzz.** DOU never reposted a vacancy with the same company and title in the sample, and Djinni has neither. Set operations on shingle hashes need no new dependency.
 - **The description is stored** as `vacancy.description` (#33, `NORMALIZER_VERSION` 3); stage 9 search reads it too.
 - **Test pairs keep no text.** DOU's consent rules out publishing full descriptions, so `tests/fixtures/dedup/pairs.json` keeps feed titles and the descriptions' shingle hashes, made with a random key that was thrown away (plain hashes can be turned back into text word by word, found in review). `scripts/dedup_sample.py` measures the rule on a backup and rebuilds the fixture.

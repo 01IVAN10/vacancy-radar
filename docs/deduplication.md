@@ -31,7 +31,7 @@ Two vacancies are the same job when no veto applies and both their titles and th
 - **One run at a time.** A run holds a transaction-level advisory lock (`db/locks.py`, `CLUSTER`) until it commits. A run that finds it taken changes nothing, logs `clusters.busy` and returns `Busy`; `notify.match` then matches what is clustered already.
 - **First seen first.** New vacancies are taken one at a time in the order their raw items were first seen, so the later half of a pair that arrives in the same run finds the earlier one, and the earlier one opens the cluster.
 - **Candidates.** A new vacancy is compared only with the clusters of vacancies whose titles share enough trigrams with its own (`title % :title`, pg_trgm's default threshold of 0.3, GIN index `ix_vacancy_title_trgm`) and that were first seen within 30 days of it (`CANDIDATE_WINDOW`). Then `pick_cluster` compares it with every member of those clusters. A run reads each vacancy's facts once. Every duplicate pair of the test sample ends up in one cluster through this search (`test_every_duplicate_pair_of_the_sample_shares_a_cluster`).
-- **The 30-day window is an assumption.** The sample is four days long, and the longest gap between two postings of one job in it, 91 hours, says more about the sample than about how sites repost. It is to be measured again on a longer sample with the findings PR. A posting further from its twin opens a cluster of its own and is sent again, as a new job.
+- **The 30-day window is an assumption.** The longest gap between two postings of one job grows with the sample: 91 hours in the four days to 2026-11-09, 159 hours (6.6 days) in the seven days to 2026-11-12. So it says more about the samples than about how sites repost, and the window stays an assumption until a month of data can be measured (stage 11, on the VPS). A posting further from its twin opens a cluster of its own and is sent again, as a new job.
 - **First sighting.** A cluster's `first_seen_at` is the earliest first sighting of its members, and it is when the job appeared for matching (`docs/telegram.md`): a subscription that started later than that never gets the job, whichever of its postings arrives. A vacancy that joins a newer cluster can still match a subscription the earlier postings did not, on its own facts (any vacancy of a cluster matches it), but the account's delivery for the cluster is unique, so nothing is sent twice. A vacancy first seen earlier than its cluster, normalized late, moves the cluster's first sighting back, which can put the job before a subscription's start; by the same rule, that job is not news to it.
 
 ## Measurements
@@ -52,11 +52,26 @@ Data: the Neon backup of 2026-11-09, 1644 raw items (Djinni 1072, DOU 572) colle
 
 0.85 is the lowest threshold at which every merge was right.
 
-**Arrival order.** Complete linkage with the subset rule could, in principle, depend on which posting arrives first: a Djinni "Sales Manager" could join whichever DOU variant came before it. Clustering the same items in 10 random orders gave exactly the clusters of first-seen order.
+**Arrival order.** Complete linkage with the subset rule can depend on which posting arrives first. That happens when one posting is the same job as two others that the rule keeps apart: it joins whichever of them it meets first. The 2026-11-09 sample has no such case, and clustering it in 10 random orders gave exactly the clusters of first-seen order. The 2026-11-13 sample (see [Measured again](#measured-again-on-2026-11-13)) has two, and up to 4 clusters change with the order:
+
+- DOU "Head of Platform & Infrastructure" is the same job as two Djinni postings, "Head of Infrastructure" and its repost "Head of Platform and Infrastructure" (texts 0.98 and 0.96). The Djinni postings have different titles on one site, so they stay apart, and the DOU posting joins one of them.
+- Djinni "Business development manager" is the same job as two DOU postings, "Business development manager" and "Business development/Sales manager (real estate)" (texts 0.99). The DOU postings have different titles on one site, so they stay apart, and the Djinni posting joins one of them.
+
+In no order are different jobs merged: the order only decides which twin the shared posting joins, and the job is sent twice either way. `assign_clusters` takes vacancies in first-seen order, so its result is repeatable.
 
 **Places.** DOU titles carry format and abroad flags (`віддалено`, `гібрид`, `за кордоном`), but `domain/dou_title.py` takes them apart from the places, and none of the 46 distinct places in the sample is a flag. So a republication that only changes its format flag is not kept apart by the places veto.
 
 **Known misses.** "Senior Web Analyst (#1264)" on DOU and "Senior Web Analyst" on Djinni (text 0.75); "Event&Marketing Manager" and "Events and Marketing Manager" (`event` and `events` are different words); "Creative Marketing Manager" on Djinni and "Senior Creative Marketing Manager" on DOU (levels differ); a few pairs whose texts were edited between sites (0.5–0.85). Each is a job sent twice, which the rule accepts.
+
+### Measured again on 2026-11-13
+
+Data: the Neon backup of 2026-11-13, 3814 raw items (Djinni 2424, DOU 1390) collected 2026-11-05 to 2026-11-12, a weekend included. Same command, same rule. `check` on a copy of this backup gives the same 3531 clusters, so the trigram search and the 30-day window lose no duplicate here either.
+
+- **Result:** 3531 clusters; 274 hold more than one vacancy (267 pairs, 5 triples, 2 of four). 234 join Djinni and DOU, 40 are Djinni reposts. All 69 clusters whose titles differ were checked by hand, and no wrong merge was found. Their titles differ by `&` against `and` or `/`, `.Net` against `.NET`, or a team, product, level marker or city that one site adds: "Product Designer" and "Product Designer (My Drama)", "Senior Security Engineer" and "Senior Security Engineer (Kyivstar TV)".
+- **Vetoes and the title rule.** 460 pairs share at least 85% of their text. The rule calls 296 of them the same job (the 274 clusters, larger ones counted per pair, and the two pairs that arrival order keeps apart, see [Arrival order](#measurements)). It keeps apart 105 by title, 56 by level, and 1 each by salary, company and places.
+- **Text threshold.** 0.70 would give 294 clusters with several vacancies and 0.50 would give 311. The extra ones are again mostly one job with an edited text ("Lead of Sales and Distribution", 0.80; "Senior Web Analyst (#1264)", 0.75), mixed with what may be different roles: two pairs of Djinni "Sales Manager" posts (0.77, 0.80), three Djinni "Computer Vision Engineer" posts (0.60–0.76), "Head of IT department" and "Head of IT" (0.55). 0.85 stays.
+- **Later postings.** 283 vacancies joined a cluster after its first posting, 52 of them more than 2 days later (40 from the other site, 13 of those with another work format). That is why matching counts its lookback from each vacancy, not from its cluster (`docs/telegram.md`). The longest gap is 159 hours (see [How it runs](#how-it-runs), the 30-day window).
+- **Places.** 67 distinct places, none of them a format or abroad flag.
 
 ## Why not something else
 
