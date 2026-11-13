@@ -164,13 +164,20 @@ def last_attempt_at(session: Session, adapter: SourceAdapter) -> datetime | None
     )
 
 
-def is_due(session: Session, adapter: SourceAdapter, *, now: datetime) -> bool:
-    """Whether at least `adapter.min_interval` has passed since the last request.
+def due_at(session: Session, adapter: SourceAdapter) -> datetime | None:
+    """When the source may be requested again, or None if it never was.
 
-    Failed and dry runs count too: they sent a request to the source as well.
+    That is `adapter.min_interval` after the last request. Failed and dry runs
+    count too: they sent a request to the source as well.
     """
     last = last_attempt_at(session, adapter)
-    return last is None or now - last >= adapter.min_interval
+    return None if last is None else last + adapter.min_interval
+
+
+def is_due(session: Session, adapter: SourceAdapter, *, now: datetime) -> bool:
+    """Whether at least `adapter.min_interval` has passed since the last request."""
+    due = due_at(session, adapter)
+    return due is None or now >= due
 
 
 def latest_attempt_id(session: Session, adapter: SourceAdapter) -> int | None:

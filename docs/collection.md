@@ -32,7 +32,7 @@ The backup trigger is still unreliable: from 2026-11-06 12:33 to 2026-11-12 22:0
 
 ## Runs per day
 
-Each source is fetched only when its `min_interval` has passed since its last request. Djinni (25 minutes) is due at every second start of the job, so expect 48 `ok` runs per day. DOU (30 minutes) is due at the second start only when that start comes at least 30 minutes after the previous request. The job starts a few seconds earlier or later each time, so DOU is fetched every 30 or 45 minutes: 35–38 runs per day were measured. Runs skipped as not due leave no row.
+Each source is fetched only when its `min_interval` has passed since its last request. Djinni (25 minutes) is due at every second start of the job, so expect 48 `ok` runs per day. DOU (30 minutes) becomes due right around the second start: the job starts a few seconds earlier or later each time. Until 2026-11-13 a start a few seconds early skipped DOU to the next one, so it was fetched every 30 or 45 minutes, 35–38 runs per day (see [Measured](#measured-2026-11-06-to-2026-11-12)). Now the collector waits for a source that becomes due within 2 minutes (`MAX_WAIT` in `collect/__main__.py`) and logs `collect.waiting`, so expect DOU every 30 minutes, 48 runs per day, and never sooner than 30 minutes after its last request. Runs skipped as not due leave no row.
 
 ```sql
 SELECT s.slug,
@@ -51,8 +51,11 @@ ORDER BY 1, 2;
 
 GitHub delays scheduled jobs under load. A gap longer than half the feed's window at the busiest hour (about 50 minutes for Djinni and 45 for DOU, see [Feed window](#feed-window)) risks missed items.
 
+The minimum gap must never be below the source's `min_interval`, 30 minutes for DOU.
+
 ```sql
 SELECT slug,
+       min(gap) AS min_gap,
        percentile_cont(ARRAY[0.5, 0.9, 0.99]) WITHIN GROUP (ORDER BY gap) AS gap_p50_p90_p99,
        max(gap) AS max_gap
 FROM (
@@ -182,7 +185,7 @@ The database held 3814 raw items (Djinni 2424, DOU 1390) in 20 MB.
 
 - **No items were missed** after the cron-job.org trigger. The only two runs that missed items are DOU's at 09:53 and 12:33 UTC on 2026-11-06, before it (see [Triggers](#triggers)).
 - **Djinni has a wide margin.** Its 30-minute gaps are under a third of its shortest window, and every run at the peak shared at least 45 of its 100 items with the previous one.
-- **DOU is fetched every 45 minutes more often than every 30**: 143 gaps of 45 minutes and 82 of 30 (see [Runs per day](#runs-per-day)). 45 minutes is half its shortest window, so the margin is thin. No item was missed, and the smallest overlap was 16 of 50, but the busiest single run brought 31 new items in 30 minutes (2026-11-10, 10:52 Kyiv): at that pace a 45-minute gap leaves about 4.
+- **DOU is fetched every 45 minutes more often than every 30**: 143 gaps of 45 minutes and 82 of 30 (see [Runs per day](#runs-per-day)). 45 minutes is half its shortest window, so the margin is thin. No item was missed, and the smallest overlap was 16 of 50, but the busiest single run brought 31 new items in 30 minutes (2026-11-10, 10:52 Kyiv): at that pace a 45-minute gap leaves about 4. Fixed on 2026-11-13: the collector now waits up to 2 minutes for a source that is almost due (see [Runs per day](#runs-per-day)); the DOU gaps are to be measured again.
 - **The weekend is quiet.** Both feeds barely move on Saturday and Sunday, and at night a fetch covers a day or more.
 - **The windows are shorter than the first samples** in `docs/sources.md` (2.5 h for Djinni, 1.7 h for DOU), which were taken outside the busiest hour.
 - One delayed dispatch made the longest gaps: Djinni 50 and DOU 65 minutes on 2026-11-11 at 22:57 Kyiv, a quiet hour.

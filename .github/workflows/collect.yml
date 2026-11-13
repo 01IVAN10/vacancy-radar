@@ -10,7 +10,8 @@ name: Collect
 on:
   # Each source sets its own minimum interval (Djinni 25 min, DOU 30 min) and
   # is skipped until it is due, so neither trigger nor cron jitter ever makes a
-  # request too early, however often the job runs.
+  # request too early, however often the job runs. A source due within 2 minutes
+  # is waited for instead, so a start a few seconds early does not skip it.
   schedule:
     # Backup trigger only: GitHub drops most scheduled runs of this workflow
     # (2 of ~56 on the first night, see docs/collection.md). Every 15 min, off
