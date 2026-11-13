@@ -6,7 +6,7 @@ empties the tables after each test.
 
 import json
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,13 +15,16 @@ import pytest
 import respx
 import structlog
 from sqlalchemy import Engine, func, select
+from sqlalchemy.orm import Session
 
 from tests.support import fixture_bytes
-from vacancy_radar.collect.__main__ import main
+from vacancy_radar.collect.__main__ import CLOCK_MARGIN, MAX_WAIT, main, time_to_wait
+from vacancy_radar.collect.service import ensure_source
 from vacancy_radar.config import get_settings
 from vacancy_radar.db.models import CollectRun, RawVacancy
 from vacancy_radar.sources.djinni import FEED_URL, DjinniAdapter
 from vacancy_radar.sources.dou import FEED_URL as DOU_FEED_URL
+from vacancy_radar.sources.dou import DouAdapter
 
 
 @pytest.fixture(autouse=True)
@@ -139,6 +142,126 @@ def test_dry_run_stores_no_items_but_records_the_request(
     dry_run, skipped = log_events(capsys.readouterr().err)
     assert (dry_run["event"], dry_run["fetched"]) == ("collect.dry_run", 6)
     assert (skipped["event"], skipped["reason"]) == ("collect.skipped", "min_interval")
+
+
+class FakeClock:
+    """A clock that `sleep` moves forward instead of blocking."""
+
+    def __init__(self) -> None:
+        # Starts at the real time: the run the CLI records takes its
+        # `started_at` from the real clock, and the seeded run must be older.
+        self.current = datetime.now(UTC)
+        self.sleeps: list[float] = []
+
+    def now(self) -> datetime:
+        return self.current
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.current += timedelta(seconds=seconds)
+
+
+def record_dou_request(engine: Engine, at: datetime) -> None:
+    """Record an earlier DOU request, as a run of the previous job would."""
+    with Session(engine) as session:
+        source_id = ensure_source(session, DouAdapter())
+        session.add(CollectRun(source_id=source_id, started_at=at, finished_at=at, status="ok"))
+        session.commit()
+
+
+def run_cli(argv: list[str], clock: FakeClock) -> int:
+    return main(argv, clock=clock.now, sleep=clock.sleep)
+
+
+@pytest.mark.parametrize("argv", [["dou"], ["dou", "--dry-run"]])
+def test_source_due_within_seconds_is_waited_for(
+    respx_mock: respx.MockRouter,
+    migrated_engine: Engine,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+) -> None:
+    route = respx_mock.get(DOU_FEED_URL).respond(200, content=DOU_FEED)
+    clock = FakeClock()
+    record_dou_request(migrated_engine, clock.now() - timedelta(minutes=29, seconds=30))
+
+    assert run_cli(argv, clock) == 0
+
+    assert clock.sleeps == [30 + CLOCK_MARGIN.total_seconds()]
+    assert route.call_count == 1
+    waiting, collected = log_events(capsys.readouterr().err)
+    assert (waiting["event"], waiting["source"], waiting["seconds"]) == (
+        "collect.waiting",
+        "dou",
+        31.0,
+    )
+    assert collected["event"] in {"collect.finished", "collect.dry_run"}
+
+
+def test_source_due_later_than_max_wait_is_skipped_at_once(
+    respx_mock: respx.MockRouter, migrated_engine: Engine, capsys: pytest.CaptureFixture[str]
+) -> None:
+    route = respx_mock.get(DOU_FEED_URL).respond(200, content=DOU_FEED)
+    clock = FakeClock()
+    record_dou_request(migrated_engine, clock.now() - timedelta(minutes=27))
+
+    assert run_cli(["dou"], clock) == 0
+
+    assert clock.sleeps == []
+    assert route.call_count == 0
+    [skipped] = log_events(capsys.readouterr().err)
+    assert (skipped["event"], skipped["reason"]) == ("collect.skipped", "min_interval")
+
+
+@pytest.mark.parametrize("elapsed", [None, timedelta(minutes=30), timedelta(hours=1)])
+def test_source_already_due_is_collected_without_waiting(
+    respx_mock: respx.MockRouter, migrated_engine: Engine, elapsed: timedelta | None
+) -> None:
+    route = respx_mock.get(DOU_FEED_URL).respond(200, content=DOU_FEED)
+    clock = FakeClock()
+    if elapsed is not None:
+        record_dou_request(migrated_engine, clock.now() - elapsed)
+
+    assert run_cli(["dou"], clock) == 0
+
+    assert clock.sleeps == []
+    assert route.call_count == 1
+
+
+def test_disabled_source_is_not_waited_for(
+    respx_mock: respx.MockRouter,
+    migrated_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("DISABLED_SOURCES", "dou")
+    get_settings.cache_clear()
+    route = respx_mock.get(DOU_FEED_URL).respond(200, content=DOU_FEED)
+    clock = FakeClock()
+    record_dou_request(migrated_engine, clock.now() - timedelta(minutes=29, seconds=50))
+
+    assert run_cli(["dou"], clock) == 0
+
+    assert clock.sleeps == []
+    assert route.call_count == 0
+    [skipped] = log_events(capsys.readouterr().err)
+    assert (skipped["event"], skipped["reason"]) == ("collect.skipped", "disabled")
+
+
+NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("due_in", "wait"),
+    [
+        (-timedelta(minutes=5), None),
+        (timedelta(0), None),
+        (timedelta(seconds=1), timedelta(seconds=1) + CLOCK_MARGIN),
+        (MAX_WAIT, MAX_WAIT + CLOCK_MARGIN),
+        (MAX_WAIT + timedelta(seconds=1), None),
+    ],
+)
+def test_time_to_wait(due_in: timedelta, wait: timedelta | None) -> None:
+    assert time_to_wait(NOW + due_in, NOW) == wait
 
 
 def test_disabled_source_is_never_fetched(

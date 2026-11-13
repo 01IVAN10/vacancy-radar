@@ -18,6 +18,7 @@ from vacancy_radar.collect.service import (
     collect_if_due,
     collect_source,
     dry_run_source,
+    due_at,
     ensure_source,
     is_due,
     last_attempt_at,
@@ -212,6 +213,7 @@ def test_source_without_runs_is_due(db_session: Session) -> None:
     adapter = FakeAdapter(FetchResult(items=[]))
 
     assert last_attempt_at(db_session, adapter) is None
+    assert due_at(db_session, adapter) is None
     assert is_due(db_session, adapter, now=datetime.now(UTC))
 
 
@@ -232,6 +234,7 @@ def test_source_is_due_once_its_min_interval_has_passed(
     [run] = runs(db_session)
 
     assert last_attempt_at(db_session, adapter) == run.started_at
+    assert due_at(db_session, adapter) == run.started_at + timedelta(minutes=30)
     assert is_due(db_session, adapter, now=run.started_at + elapsed) is due
 
 
@@ -241,7 +244,9 @@ def test_due_check_looks_only_at_the_same_source(db_session: Session) -> None:
     with httpx.Client() as client:
         collect_source(other, client=client, session=db_session)
 
-    assert is_due(db_session, FakeAdapter(FetchResult(items=[])), now=datetime.now(UTC))
+    adapter = FakeAdapter(FetchResult(items=[]))
+    assert due_at(db_session, adapter) is None
+    assert is_due(db_session, adapter, now=datetime.now(UTC))
 
 
 @pytest.fixture
