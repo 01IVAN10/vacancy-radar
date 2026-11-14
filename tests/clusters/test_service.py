@@ -9,10 +9,11 @@ from sqlalchemy.orm import Session
 
 from tests.factories import JOB_TEXT, NOW, add_vacancy
 from tests.support import fixture_bytes
-from vacancy_radar.clusters.service import CANDIDATE_WINDOW, Busy, Clustered, assign_clusters
+from vacancy_radar.clusters.service import Busy, Clustered, assign_clusters
 from vacancy_radar.collect.service import ensure_source, upsert_raw_items
 from vacancy_radar.db import locks
 from vacancy_radar.db.models import Vacancy, VacancyCluster
+from vacancy_radar.domain.dedup import CANDIDATE_WINDOW
 from vacancy_radar.domain.normalize import normalize
 from vacancy_radar.normalize.service import normalize_pending
 from vacancy_radar.sources import ADAPTERS, djinni

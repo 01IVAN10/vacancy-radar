@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
-from sqlalchemy import Engine, NullPool, text
+from sqlalchemy import Engine, NullPool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from tests.support import (
     TEST_BOT_USERNAME,
     TEST_SECRET_KEY,
     alembic_config,
+    empty_database,
     redis_test_url,
     to_libpq,
     to_sqlalchemy,
@@ -149,14 +150,7 @@ def committed_database(
     get_engine.cache_clear()
     get_sessionmaker.cache_clear()
     get_settings.cache_clear()
-    with migrated_engine.begin() as connection:
-        connection.execute(
-            text(
-                "TRUNCATE notification, delivery, vacancy, vacancy_cluster, skill, "
-                "exchange_rate, collect_run, raw_vacancy, source, subscription, "
-                "telegram_link_token, app_user RESTART IDENTITY"
-            )
-        )
+    empty_database(migrated_engine)
 
 
 @pytest.fixture
