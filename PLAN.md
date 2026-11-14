@@ -150,11 +150,12 @@ Decisions (2026-11-09, measured on the Neon backup of that day, details in `docs
 
 ### Stage 9: Search and analytics
 - [x] FTS `search_vector` (`simple` + `unaccent`), GIN on it and on `skills` (the trigram index on `title` exists since stage 8: `ix_vacancy_title_trgm`; see `docs/search.md`)
-- [ ] Vacancy search page: FTS + filters + pagination
+- [x] Vacancy search page: FTS + filters + pagination (`/vacancies`, one result per job)
 - [ ] Materialized views: top skills per month, salary ranges per week, new vacancies per week (each with `n`)
 - [ ] Periodic refresh task
 - [ ] `/analytics` page with Chart.js, medians hidden below the minimum sample
-- [ ] `docs/analytics.md`: queries, EXPLAIN ANALYZE before/after indexes, findings
+- [x] `docs/search.md`: queries, EXPLAIN ANALYZE before/after indexes (today and ×50), findings
+- [ ] `docs/analytics.md`: queries, EXPLAIN ANALYZE, findings
 
 ### Stage 10: Second source
 - [x] Written consent from DOU recorded in `docs/sources.md` (request to `legal@dou.ua`)
@@ -168,7 +169,8 @@ Decisions (2026-11-09, measured on the Neon backup of that day, details in `docs
 - [ ] GitHub Actions deploy over SSH, secrets in GH Secrets
 - [ ] Migrate data from the free Postgres (`pg_dump` → `pg_restore`), disable the cron workflow
 - [ ] Delete the cron-job.org job and revoke its token
-- [ ] Rate-limit sign-in and sign-up (Redis token bucket), CSP and HSTS in Caddy
+- [ ] Rate-limit sign-in, sign-up and the public search (Redis token bucket), CSP and HSTS in Caddy
+- [ ] Postgres tuned for SSD: `random_page_cost = 1.1`, so a common word uses the search index (`docs/search.md`, Measurements)
 - [ ] Smoke check after deploy
 
 ### Stage 12: Polish

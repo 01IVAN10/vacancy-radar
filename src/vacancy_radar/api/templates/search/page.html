@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_choices.html" import checkboxes, monthly_usd_input, skill_picker, skills_match_choice %}
+{% block title %}{% if form.q %}{{ form.q }} · {% endif %}Vacancies · Vacancy Radar{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>Vacancies</h1>
+  <p>IT jobs from Djinni and DOU. A job posted on both sites is shown once.</p>
+</hgroup>
+{% set action = url_for('vacancies').path %}
+{# `role="search"` on the input and its button only: Pico.css lays out such an element as one row.
+   `hx-history="false"`: HTMX's history snapshot keeps the markup but not what was ticked or
+   typed, so going back would show old results under a reset form. Without a snapshot, HTMX
+   asks the server for the URL, which renders the form from it. #}
+<form method="get" action="{{ action }}" hx-history="false"
+      hx-get="{{ action }}" hx-target="#results" hx-push-url="true" hx-trigger="submit, change">
+  <fieldset role="search">
+    <input type="search" name="q" value="{{ form.q }}" maxlength="{{ max_query_length }}"
+           placeholder='python django -senior, "data engineer"' aria-label="Words to search for"
+           {% if errors.q %}aria-invalid="true"{% endif %}>
+    <button type="submit">Search</button>
+  </fieldset>
+  <details{% if filters_used or errors %} open{% endif %}>
+    <summary>Filters</summary>
+    <div class="grid">
+      <label>
+        First seen
+        <select name="period">
+          <option value="">Any time</option>
+          {% for value, label in periods.items() %}
+            <option value="{{ value }}" {% if form.period == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Sort
+        <select name="sort">
+          {% for value, label in sorts.items() %}
+            <option value="{{ value }}" {% if form.sort == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Salary from, US dollars per month
+        {{ monthly_usd_input(form.min_salary_usd, invalid=errors.min_salary_usd) }}
+      </label>
+    </div>
+    <p><small>Filters are strict: a vacancy that does not state a level, a work format or a salary is left out by a filter on it.</small></p>
+    <fieldset>
+      <legend>Seniority</legend>
+      {{ checkboxes("seniority", levels, form.seniority) }}
+    </fieldset>
+    <fieldset>
+      <legend>Work format</legend>
+      {{ checkboxes("work_formats", formats, form.work_formats) }}
+    </fieldset>
+    {% if source_labels %}
+      <fieldset>
+        <legend>Source</legend>
+        {{ checkboxes("sources", source_labels, form.sources) }}
+      </fieldset>
+    {% endif %}
+    <fieldset>
+      <legend>Skills</legend>
+      {{ skill_picker(skill_groups, form.skills) }}
+      <small>With two or more skills, show vacancies that list</small>
+      {{ skills_match_choice(form.skills_match) }}
+    </fieldset>
+    <button type="submit" class="secondary">Apply filters</button>
+  </details>
+</form>
+<div id="results">{% include "search/_results.html" %}</div>
+{% endblock %}

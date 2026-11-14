@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from tests.notify.factories import (
+from tests.factories import (
     LINKED_AT,
     NOW,
     add_clustered_vacancy,

@@ -3,6 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# HTMX swaps 2xx responses only; 422 carries a form's errors, so it is swapped too.
+     HTMX checks a form before every request it sends, a `change` included, and by default
+     drops an invalid one silently; `reportValidityOfForms` shows the browser's message. #}
+  <meta name="htmx-config"
+        content='{"reportValidityOfForms": true, "responseHandling": [{"code": "204", "swap": false}, {"code": "[23]..", "swap": true}, {"code": "422", "swap": true}, {"code": "[45]..", "swap": false, "error": true}]}'>
   <title>{% block title %}Vacancy Radar{% endblock %}</title>
   <link rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css"
@@ -16,6 +21,9 @@
     form.inline button { margin: 0; padding: 0.25rem 0.75rem; }
     td.actions { white-space: nowrap; text-align: right; }
     .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
+    article.job header { margin-bottom: 0.75rem; }
+    article.job p { margin-bottom: 0.5rem; }
+    article.job footer { margin-top: 0.75rem; }
   </style>
 </head>
 {# Every HTMX request carries the CSRF token in a header; plain forms send a hidden field. #}
@@ -24,6 +32,7 @@
     <nav>
       <ul><li><a href="/"><strong>Vacancy Radar</strong></a></li></ul>
       <ul>
+        <li><a href="{{ url_for('vacancies').path }}">Vacancies</a></li>
         {% if user %}
           <li><a href="{{ url_for('subscriptions_list').path }}">Subscriptions</a></li>
           <li><a href="{{ url_for('telegram_page').path }}">Telegram</a></li>

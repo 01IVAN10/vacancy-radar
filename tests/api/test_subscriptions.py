@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.support import add_user, csrf_token, sign_in
-from vacancy_radar.api.subscriptions import CATEGORY_LABELS, describe
+from vacancy_radar.api.labels import CATEGORY_LABELS
+from vacancy_radar.api.subscriptions import describe
 from vacancy_radar.db.models import Subscription, User
 from vacancy_radar.domain.skills import SKILLS, Category
 from vacancy_radar.domain.subscriptions import SalaryFloor, SubscriptionFilter
@@ -170,10 +171,18 @@ async def test_invalid_form_is_shown_again_with_errors(
     assert response.status_code == 422
     assert "Give the subscription a name." in response.text
     assert "Enter a whole number of dollars" in response.text
-    # What the user entered is kept.
+    # What the user entered is kept, and the field points at its error.
     assert 'value="lots"' in response.text
+    assert 'aria-invalid="true" aria-describedby="salary-error"' in response.text
     assert re.search(r'value="django"\s+checked', response.text)
     assert await stored(async_session) == []
+
+
+async def test_the_browser_checks_the_form_before_sending(client: AsyncClient, owner: User) -> None:
+    response = await client.get("/subscriptions/new")
+
+    assert 'pattern=" *[0-9][0-9, ]*"' in response.text
+    assert " novalidate" not in response.text
 
 
 async def test_a_subscription_needs_a_criterion(client: AsyncClient, owner: User) -> None:

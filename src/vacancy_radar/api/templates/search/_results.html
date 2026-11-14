@@ -1,0 +1,30 @@
+{# The part of the search page that HTMX replaces. #}
+{% if errors %}
+  <div role="alert">
+    <p><mark>Check the search form.</mark></p>
+    <ul>{% for message in errors.values() %}<li>{{ message }}</li>{% endfor %}</ul>
+  </div>
+{% elif not page.total %}
+  <p>No jobs found. Try fewer words or filters.</p>
+{% else %}
+  <p><small>
+    {{ "{:,}".format(page.total) }} {{ "job" if page.total == 1 else "jobs" }} found
+    {%- if page.pages > 1 %}, page {{ page.query.page }} of {{ page.pages }}{% endif %}
+  </small></p>
+  {% for result in results %}{% include "search/_card.html" %}{% endfor %}
+  {% if not results %}<p>There are no more results.</p>{% endif %}
+  {% if previous_url or next_url %}
+    <nav aria-label="Pages">
+      <ul>
+        {% if previous_url %}
+          <li><a href="{{ previous_url }}" hx-get="{{ previous_url }}" hx-target="#results" hx-push-url="true">← Previous</a></li>
+        {% endif %}
+      </ul>
+      <ul>
+        {% if next_url %}
+          <li><a href="{{ next_url }}" hx-get="{{ next_url }}" hx-target="#results" hx-push-url="true">Next →</a></li>
+        {% endif %}
+      </ul>
+    </nav>
+  {% endif %}
+{% endif %}

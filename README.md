@@ -19,7 +19,7 @@ curl http://localhost:8000/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-The site is at http://localhost:8000, where you can sign up and sign in. Its pages need the database schema, which is applied from the host with `uv run alembic upgrade head` (see [Development](#development)). How accounts, cookies and CSRF tokens work is described in [`docs/auth.md`](docs/auth.md), subscriptions in [`docs/subscriptions.md`](docs/subscriptions.md), and linking Telegram in [`docs/telegram.md`](docs/telegram.md).
+The site is at http://localhost:8000, where anyone can search vacancies at `/vacancies` ([`docs/search.md`](docs/search.md)), and you can sign up and sign in. Its pages need the database schema, which is applied from the host with `uv run alembic upgrade head` (see [Development](#development)). How accounts, cookies and CSRF tokens work is described in [`docs/auth.md`](docs/auth.md), subscriptions in [`docs/subscriptions.md`](docs/subscriptions.md), and linking Telegram in [`docs/telegram.md`](docs/telegram.md).
 
 To override settings, copy `.env.example` to `.env` and edit it.
 

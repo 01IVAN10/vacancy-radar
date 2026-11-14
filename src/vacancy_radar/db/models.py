@@ -48,9 +48,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from vacancy_radar.db.base import Base
 from vacancy_radar.db.fts import SEARCH_CONFIG
+from vacancy_radar.domain.choices import SKILLS_MATCHES
 from vacancy_radar.domain.delivery import DELIVERY_STATUSES, DeliveryStatus
 from vacancy_radar.domain.seniority import LEVELS
-from vacancy_radar.domain.subscriptions import MAX_NAME_LENGTH, SKILLS_MATCHES
+from vacancy_radar.domain.subscriptions import MAX_NAME_LENGTH
 from vacancy_radar.domain.work_format import WORK_FORMATS
 
 

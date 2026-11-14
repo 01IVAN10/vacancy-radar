@@ -9,7 +9,7 @@ import structlog
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from tests.notify.factories import JOB_TEXT, add_vacancy
+from tests.factories import JOB_TEXT, add_vacancy
 from vacancy_radar.clusters import __main__ as clusters_cli
 from vacancy_radar.clusters.__main__ import main
 from vacancy_radar.db import locks

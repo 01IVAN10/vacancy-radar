@@ -10,7 +10,7 @@ from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 from structlog.testing import capture_logs
 
-from tests.notify.factories import JOB_TEXT, add_subscription, add_user, add_vacancy
+from tests.factories import JOB_TEXT, add_subscription, add_user, add_vacancy
 from tests.support import fixture_bytes
 from vacancy_radar.config import get_settings
 from vacancy_radar.db import locks

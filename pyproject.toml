@@ -72,6 +72,7 @@ known-first-party = ["vacancy_radar", "tests"]
 # letters and the apostrophe look-alikes on purpose.
 "src/vacancy_radar/db/fts.py" = ["RUF001", "RUF002", "RUF003"]
 "migrations/versions/0015_full_text_search_on_vacancy.py" = ["RUF001", "RUF002", "RUF003"]
+"migrations/versions/0016_split_slashes_in_search_text.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/**" = [
     "S101",   # assert is how pytest works
     "S105",   # test accounts have fixed passwords, keys and tokens on purpose

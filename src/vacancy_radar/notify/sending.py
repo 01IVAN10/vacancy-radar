@@ -29,11 +29,13 @@ import structlog
 from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
+from vacancy_radar.clusters.showing import card_of, fullest_first
 from vacancy_radar.db import locks
 from vacancy_radar.db.models import Delivery, Notification, Source, Subscription, User, Vacancy
+from vacancy_radar.domain.card import VacancyCard
 from vacancy_radar.domain.matching import VacancyFacts, matches
 from vacancy_radar.domain.subscriptions import SubscriptionFilter
-from vacancy_radar.notify.message import VacancyCard, render_message
+from vacancy_radar.notify.message import render_message
 from vacancy_radar.notify.outcome import GiveUp, Outcome, Retry, outcome_of
 from vacancy_radar.subscriptions.service import filter_of
 from vacancy_radar.telegram.client import TelegramClient
@@ -180,8 +182,7 @@ def _card(
         select(Vacancy, Source.name)
         .join(Source, Source.id == Vacancy.source_id)
         .where(Vacancy.cluster_id == cluster_id)
-        # False sorts before true: vacancies with a salary, then with a company.
-        .order_by(Vacancy.salary_currency.is_(None), Vacancy.company.is_(None), Vacancy.id)
+        .order_by(*fullest_first())
     ).all()
     if not members:
         return None
@@ -193,20 +194,7 @@ def _card(
         ),
         members[0],
     )
-    return VacancyCard(
-        title=vacancy.title,
-        url=vacancy.url,
-        source_name=source_name,
-        company=vacancy.company,
-        cities=tuple(vacancy.cities),
-        salary_min=vacancy.salary_min,
-        salary_max=vacancy.salary_max,
-        salary_currency=vacancy.salary_currency,
-        salary_period=vacancy.salary_period,
-        seniority=tuple(vacancy.seniority),
-        work_formats=tuple(vacancy.work_formats),
-        skills=tuple(vacancy.skills),
-    )
+    return card_of(vacancy, source_name)
 
 
 def _facts(vacancy: Vacancy) -> VacancyFacts:

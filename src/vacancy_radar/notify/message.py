@@ -1,17 +1,15 @@
 """The Telegram message for one matched vacancy. Pure: no I/O.
 
-It shows the title, the normalized fields and a link to the original posting,
-never the description: public output links to the source instead of
-republishing it (see CLAUDE.md, Legal data collection). Every value is
-HTML-escaped, because the message is sent with `parse_mode=HTML`.
+It shows the vacancy's card (`domain/card.py`): the title, the normalized
+fields and a link to the original posting, never the description. Every
+value is HTML-escaped, because the message is sent with `parse_mode=HTML`.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from html import escape
 from typing import Final
 
-from vacancy_radar.domain.skills import SKILLS_BY_SLUG
+from vacancy_radar.domain.card import VacancyCard, details, format_salary, place, skill_names
 
 # Telegram's limit on a message's text, in UTF-16 code units after entities
 # are parsed. Counting the HTML instead is stricter, so a message within it
@@ -21,27 +19,6 @@ MAX_SKILLS: Final = 8
 MAX_TITLE_LENGTH: Final = 200
 MAX_COMPANY_LENGTH: Final = 100
 MAX_CITIES: Final = 5
-
-CURRENCY_SIGNS: Final = {"USD": "$", "EUR": "€", "UAH": "₴"}
-PERIODS: Final = {"month": "a month", "year": "a year", "hour": "an hour"}
-
-
-@dataclass(frozen=True, slots=True)
-class VacancyCard:
-    """What a message shows about a vacancy, as stored in `vacancy`."""
-
-    title: str
-    url: str
-    source_name: str
-    company: str | None
-    cities: Sequence[str]
-    salary_min: int | None
-    salary_max: int | None
-    salary_currency: str | None
-    salary_period: str | None
-    seniority: Sequence[str]
-    work_formats: Sequence[str]
-    skills: Sequence[str]
 
 
 def render_message(card: VacancyCard, subscription_names: Sequence[str], *, site_url: str) -> str:
@@ -54,19 +31,16 @@ def render_message(card: VacancyCard, subscription_names: Sequence[str], *, site
     """
     lines = [f"<b>{escape(_shorten(card.title, MAX_TITLE_LENGTH))}</b>"]
     company = _shorten(card.company, MAX_COMPANY_LENGTH) if card.company else None
-    cities = list(card.cities[:MAX_CITIES])
-    place = ", ".join([company, *cities] if company else cities)
-    if place:
-        lines.append(escape(place))
+    where = place(company, card.cities[:MAX_CITIES])
+    if where:
+        lines.append(escape(where))
     salary = format_salary(card)
     if salary:
         lines.append(f"💰 {escape(salary)}")
-    details = [level.capitalize() for level in card.seniority] + [
-        work_format.capitalize() for work_format in card.work_formats
-    ]
-    if details:
-        lines.append(escape(" · ".join(details)))
-    skills = [SKILLS_BY_SLUG[slug].name for slug in card.skills if slug in SKILLS_BY_SLUG]
+    levels_and_formats = details(card)
+    if levels_and_formats:
+        lines.append(escape(" · ".join(levels_and_formats)))
+    skills = skill_names(card)
     if skills:
         shown = ", ".join(skills[:MAX_SKILLS])
         more = len(skills) - MAX_SKILLS
@@ -94,25 +68,6 @@ def _with_footer(body: str, names: str, site_url: str) -> str:
         f"{body}\n\n<i>Matched: {escape(names)}</i> · "
         f'<a href="{escape(site_url)}/subscriptions">Manage subscriptions</a>'
     )
-
-
-def format_salary(card: VacancyCard) -> str | None:
-    """The salary as the vacancy states it, such as "$3000-4500 a month"."""
-    if card.salary_currency is None or card.salary_period is None:
-        return None
-    sign = CURRENCY_SIGNS.get(card.salary_currency, f"{card.salary_currency} ")
-    match card.salary_min, card.salary_max:
-        case int(low), int(high) if low != high:
-            amount = f"{sign}{low}-{high}"
-        case int(low), int():
-            amount = f"{sign}{low}"
-        case int(low), None:
-            amount = f"from {sign}{low}"
-        case None, int(high):
-            amount = f"up to {sign}{high}"
-        case _:
-            return None
-    return f"{amount} {PERIODS.get(card.salary_period, card.salary_period)}"
 
 
 def _shorten(text: str, limit: int) -> str:

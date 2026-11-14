@@ -18,7 +18,7 @@ from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 from structlog.testing import capture_logs
 
-from tests.notify.factories import (
+from tests.factories import (
     CHAT_ID,
     NOW,
     add_clustered_vacancy,

@@ -11,7 +11,7 @@ import respx
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from tests.notify.factories import add_vacancy
+from tests.factories import add_vacancy
 from tests.support import fixture_bytes
 from vacancy_radar.collect.service import ensure_source, upsert_raw_items
 from vacancy_radar.db.models import RawVacancy, Skill, Source, Vacancy

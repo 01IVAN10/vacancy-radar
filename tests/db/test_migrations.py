@@ -66,3 +66,45 @@ def test_downgrade_keeps_an_interrupted_run_as_a_failed_request(
             connection.execute(text("TRUNCATE collect_run, source RESTART IDENTITY CASCADE"))
 
     assert tuple(row) == ("failed", "Abandoned", True)
+
+
+def test_new_search_text_rewrites_the_stored_vectors(
+    migrated_engine: Engine, test_database_url: str
+) -> None:
+    config = alembic_config(test_database_url)
+    command.downgrade(config, "0015")
+    try:
+        with migrated_engine.begin() as connection:
+            source_id = connection.scalar(
+                text(
+                    "INSERT INTO source (slug, name, base_url)"
+                    " VALUES ('fake', 'Fake', 'https://fake.example') RETURNING id"
+                )
+            )
+            raw_id = connection.scalar(
+                text(
+                    "INSERT INTO raw_vacancy (source_id, external_id, url, payload)"
+                    " VALUES (:source_id, '1', 'https://fake.example/1', '{}') RETURNING id"
+                ),
+                {"source_id": source_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO vacancy (raw_vacancy_id, source_id, url, title, cities,"
+                    " seniority, work_formats, skills, description, normalizer_version,"
+                    " raw_updated_at) VALUES (:raw_id, :source_id, 'https://fake.example/1',"
+                    " 'Python/FastAPI', '{}', '{}', '{}', '{}', '', 3, now())"
+                ),
+                {"raw_id": raw_id, "source_id": source_id},
+            )
+        command.upgrade(config, "0016")
+        with migrated_engine.connect() as connection:
+            vector = connection.scalar(text("SELECT search_vector::text FROM vacancy"))
+    finally:
+        command.upgrade(config, "head")
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                text("TRUNCATE vacancy, raw_vacancy, source RESTART IDENTITY CASCADE")
+            )
+
+    assert vector == "'fastapi':2A 'python':1A"

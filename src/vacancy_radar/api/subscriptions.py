@@ -12,17 +12,16 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from vacancy_radar.api.deps import CurrentUser, DbSession, require_user
+from vacancy_radar.api.labels import FORMAT_LABELS, LEVEL_LABELS, SKILL_GROUPS
 from vacancy_radar.api.templating import templates
 from vacancy_radar.auth.csrf import verify_csrf
-from vacancy_radar.domain.seniority import LEVELS
-from vacancy_radar.domain.skills import SKILLS, SKILLS_BY_SLUG, Category
+from vacancy_radar.domain.skills import SKILLS_BY_SLUG
 from vacancy_radar.domain.subscriptions import (
     InvalidSubscriptionError,
     SubscriptionFilter,
     SubscriptionForm,
     build_subscription,
 )
-from vacancy_radar.domain.work_format import WORK_FORMATS
 from vacancy_radar.subscriptions import service
 from vacancy_radar.subscriptions.service import (
     MAX_SUBSCRIPTIONS,
@@ -38,28 +37,6 @@ router = APIRouter(
 
 LIMIT_REACHED: Final = f"You have reached the limit of {MAX_SUBSCRIPTIONS} subscriptions."
 NOT_FOUND: Final = "No such subscription."
-
-CATEGORY_LABELS: Final[dict[Category, str]] = {
-    "language": "Languages",
-    "backend": "Backend",
-    "frontend": "Frontend",
-    "mobile": "Mobile",
-    "database": "Databases",
-    "data": "Data",
-    "ml": "Machine learning",
-    "cloud": "Cloud",
-    "devops": "DevOps",
-    "qa": "QA",
-    "embedded": "Embedded",
-    "tool": "Tools",
-}
-LEVEL_LABELS: Final = {level: level.capitalize() for level in LEVELS}
-FORMAT_LABELS: Final = {work_format: work_format.capitalize() for work_format in WORK_FORMATS}
-# Skills by category, in dictionary order, for the form's checkbox groups.
-SKILL_GROUPS: Final = [
-    (label, [skill for skill in SKILLS if skill.category == category])
-    for category, label in CATEGORY_LABELS.items()
-]
 
 
 def submitted_form(
