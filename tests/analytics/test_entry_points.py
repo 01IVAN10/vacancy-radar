@@ -7,9 +7,10 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from tests.factories import add_clustered_vacancy
+from tests.support import empty_database
 from vacancy_radar.analytics.__main__ import main
 from vacancy_radar.analytics.tasks import refresh_task
-from vacancy_radar.analytics.views import summary
+from vacancy_radar.analytics.views import MATERIALIZED_VIEWS, summary
 
 
 def add_jobs(engine: Engine, count: int) -> None:
@@ -44,6 +45,17 @@ def test_task_refreshes_the_views(committed_database: Engine) -> None:
     assert counted_jobs(committed_database) == 3
 
 
-def test_views_are_empty_again_after_a_committed_test(committed_database: Engine) -> None:
-    # The cleanup of the tests above refreshed the views over empty tables.
-    assert counted_jobs(committed_database) == 0
+def test_emptying_the_database_empties_the_views(committed_database: Engine) -> None:
+    add_jobs(committed_database, 2)
+    refresh_task.apply()
+
+    empty_database(committed_database)
+
+    with committed_database.connect() as connection:
+        counts = [
+            connection.scalar(select(summary.c.jobs))
+            if view is summary
+            else len(connection.execute(select(view)).all())
+            for view in MATERIALIZED_VIEWS
+        ]
+    assert counts == [0] * len(MATERIALIZED_VIEWS)

@@ -7,9 +7,31 @@ not see them. docs/analytics.md describes each one.
 
 from typing import Final
 
-from sqlalchemy import Column, Date, DateTime, Integer, MetaData, Table, Text
+from sqlalchemy import BigInteger, Column, Date, DateTime, Integer, MetaData, Numeric, Table, Text
+from sqlalchemy.dialects.postgresql import ARRAY
 
 _views = MetaData()
+
+# One row per job (cluster), from all its postings: the skills and levels any
+# of them names, and the first monthly dollar salary.
+job: Final = Table(
+    "analytics_job",
+    _views,
+    Column("job_id", BigInteger),
+    Column("first_seen_on", Date),
+    Column("postings", Integer),
+    Column("skills", ARRAY(Text)),
+    Column("seniority", ARRAY(Text)),
+    Column("salary_usd", Numeric),
+)
+# When a job first appeared on each source it is posted on.
+job_source: Final = Table(
+    "analytics_job_source",
+    _views,
+    Column("job_id", BigInteger),
+    Column("source", Text),
+    Column("first_seen_on", Date),
+)
 
 # Jobs that name a skill, by Kyiv month of first sighting: `n` name `skill`, `jobs` in all.
 skill_monthly: Final = Table(
@@ -31,7 +53,8 @@ salary_weekly: Final = Table(
     Column("median", Integer),
     Column("p75", Integer),
 )
-# Jobs first seen in a week, on one source or on any ("all").
+# Jobs new in a week: for "all" sources the week the job first appeared
+# anywhere, for one source the week it first appeared there.
 jobs_weekly: Final = Table(
     "analytics_jobs_weekly",
     _views,
@@ -54,5 +77,6 @@ summary: Final = Table(
     Column("last_day", Date),
 )
 
-# In the order they are refreshed: the summary last, so its time covers the others.
-MATERIALIZED_VIEWS: Final = (skill_monthly, salary_weekly, jobs_weekly, summary)
+# In the order they are refreshed: the views of jobs first, because the
+# aggregates are built from them.
+MATERIALIZED_VIEWS: Final = (job, job_source, skill_monthly, salary_weekly, jobs_weekly, summary)

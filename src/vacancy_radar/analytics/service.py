@@ -1,10 +1,11 @@
 """Read the analytics views for the `/analytics` page.
 
-Everything here reads the materialized views of migration 0017, never the
-vacancies themselves, so a page view costs a few index lookups however much
-data there is. The numbers are as fresh as the last `analytics.refresh`;
-`Summary.refreshed_at` says when that was. The rules for showing them (the
-minimum sample, incomplete periods) are `domain/analytics.py`.
+`read_analytics` is the one entry point: it reads the summary, decides from
+it and the current moment which periods are incomplete (`domain.analytics.
+Coverage`), and reads every series. It reads only the materialized views of
+migration 0017, never the vacancies, so a page view costs a few lookups
+however much data there is. The numbers are as fresh as the last
+`analytics.refresh`; `Summary.refreshed_at` says when that was.
 """
 
 from dataclasses import dataclass
@@ -15,19 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vacancy_radar.analytics.views import jobs_weekly, salary_weekly, skill_monthly, summary
-from vacancy_radar.domain.analytics import (
-    Quartiles,
-    SalaryWeek,
-    month_is_partial,
-    salary_week,
-    share,
-    week_is_partial,
-)
+from vacancy_radar.domain.analytics import ALL, Coverage, Quartiles, SalaryWeek, salary_week, share
 from vacancy_radar.domain.skills import SKILLS_BY_SLUG
 
 TOP_SKILLS: Final = 15
-# The salary series of every level, and of all of them together.
-ALL_LEVELS: Final = "all"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +63,45 @@ class JobsWeek:
     partial: bool
 
 
-async def read_summary(session: AsyncSession) -> Summary | None:
-    """The summary, or None before any job has been counted."""
+@dataclass(frozen=True, slots=True)
+class Analytics:
+    summary: Summary
+    # Months with skill counts, newest first.
+    months: tuple[date, ...]
+    # The month asked for, or the newest; None for a month without data.
+    top_skills: TopSkills | None
+    # Weekly salaries of one level, or of `ALL` levels, oldest week first.
+    level: str
+    salaries: tuple[SalaryWeek, ...]
+    # New jobs per week by source slug, and for `ALL` sources, oldest week first.
+    jobs: dict[str, tuple[JobsWeek, ...]]
+
+
+async def read_analytics(
+    session: AsyncSession, now: datetime, *, month: date | None = None, level: str = ALL
+) -> Analytics | None:
+    """Everything the page shows at the moment `now`, or None before any job is counted.
+
+    `month` picks the month of top skills (the newest by default), `level`
+    the salary series (`ALL` levels by default).
+    """
+    totals = await _read_summary(session)
+    if totals is None:
+        return None
+    coverage = Coverage.at(totals.first_day, now)
+    available = await _months(session)
+    chosen = month if month is not None else available[0] if available else None
+    return Analytics(
+        summary=totals,
+        months=available,
+        top_skills=await _top_skills(session, chosen, coverage) if chosen else None,
+        level=level,
+        salaries=await _salaries(session, level, coverage),
+        jobs=await _jobs(session, coverage),
+    )
+
+
+async def _read_summary(session: AsyncSession) -> Summary | None:
     row = (await session.execute(select(summary))).one_or_none()
     if row is None or not row.jobs:
         return None
@@ -87,24 +116,20 @@ async def read_summary(session: AsyncSession) -> Summary | None:
     )
 
 
-async def months(session: AsyncSession) -> list[date]:
-    """The months that have skill counts, newest first."""
+async def _months(session: AsyncSession) -> tuple[date, ...]:
     rows = await session.scalars(
         select(skill_monthly.c.month).distinct().order_by(skill_monthly.c.month.desc())
     )
-    return list(rows)
+    return tuple(rows)
 
 
-async def top_skills(
-    session: AsyncSession, month: date, *, first_day: date, today: date, limit: int = TOP_SKILLS
-) -> TopSkills | None:
-    """The most named skills of `month`, most named first; None for a month without data."""
+async def _top_skills(session: AsyncSession, month: date, coverage: Coverage) -> TopSkills | None:
     rows = (
         await session.execute(
             select(skill_monthly)
             .where(skill_monthly.c.month == month)
             .order_by(skill_monthly.c.n.desc(), skill_monthly.c.skill)
-            .limit(limit)
+            .limit(TOP_SKILLS)
         )
     ).all()
     if not rows:
@@ -113,7 +138,7 @@ async def top_skills(
     return TopSkills(
         month=month,
         jobs=jobs,
-        partial=month_is_partial(month, first_day=first_day, today=today),
+        partial=coverage.month_is_partial(month),
         skills=tuple(
             SkillCount(
                 slug=row.skill,
@@ -127,40 +152,25 @@ async def top_skills(
     )
 
 
-async def salaries_by_week(
-    session: AsyncSession, level: str, *, first_day: date, today: date
-) -> list[SalaryWeek]:
-    """The weekly salary quartiles of `level` (or `ALL_LEVELS`), oldest week first."""
+async def _salaries(
+    session: AsyncSession, level: str, coverage: Coverage
+) -> tuple[SalaryWeek, ...]:
     rows = await session.execute(
         select(salary_weekly).where(salary_weekly.c.level == level).order_by(salary_weekly.c.week)
     )
-    return [
-        salary_week(
-            row.week,
-            row.n,
-            Quartiles(row.p25, row.median, row.p75),
-            first_day=first_day,
-            today=today,
-        )
+    return tuple(
+        salary_week(row.week, row.n, Quartiles(row.p25, row.median, row.p75), coverage)
         for row in rows
-    ]
+    )
 
 
-async def jobs_by_week(
-    session: AsyncSession, *, first_day: date, today: date
-) -> dict[str, list[JobsWeek]]:
-    """New jobs per week, by source slug and for `"all"` sources, oldest week first."""
+async def _jobs(session: AsyncSession, coverage: Coverage) -> dict[str, tuple[JobsWeek, ...]]:
     rows = await session.execute(
         select(jobs_weekly).order_by(jobs_weekly.c.source, jobs_weekly.c.week)
     )
     series: dict[str, list[JobsWeek]] = {}
     for row in rows:
         series.setdefault(row.source, []).append(
-            JobsWeek(
-                week=row.week,
-                jobs=row.jobs,
-                with_skills=row.with_skills,
-                partial=week_is_partial(row.week, first_day=first_day, today=today),
-            )
+            JobsWeek(row.week, row.jobs, row.with_skills, coverage.week_is_partial(row.week))
         )
-    return series
+    return {source: tuple(weeks) for source, weeks in series.items()}

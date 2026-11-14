@@ -1,28 +1,24 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
 from vacancy_radar.domain.analytics import (
     MIN_SAMPLE,
+    Coverage,
     Quartiles,
     SalaryWeek,
-    month_is_partial,
     salary_week,
     share,
-    week_is_partial,
 )
 
 MONDAY = date(2026, 11, 9)
 QUARTILES = Quartiles(p25=1000, median=1500, p75=2200)
+COVERAGE = Coverage(first_day=date(2026, 11, 5), today=date(2026, 11, 20))
 
 
 def test_a_median_of_a_small_sample_is_hidden_but_its_size_is_kept() -> None:
-    small = salary_week(
-        MONDAY, MIN_SAMPLE - 1, QUARTILES, first_day=date(2026, 11, 5), today=date(2026, 11, 20)
-    )
-    enough = salary_week(
-        MONDAY, MIN_SAMPLE, QUARTILES, first_day=date(2026, 11, 5), today=date(2026, 11, 20)
-    )
+    small = salary_week(MONDAY, MIN_SAMPLE - 1, QUARTILES, COVERAGE)
+    enough = salary_week(MONDAY, MIN_SAMPLE, QUARTILES, COVERAGE)
 
     assert small == SalaryWeek(MONDAY, MIN_SAMPLE - 1, None, partial=False)
     assert enough == SalaryWeek(MONDAY, MIN_SAMPLE, QUARTILES, partial=False)
@@ -31,27 +27,37 @@ def test_a_median_of_a_small_sample_is_hidden_but_its_size_is_kept() -> None:
 @pytest.mark.parametrize(
     ("first_day", "today", "partial"),
     [
-        (date(2026, 11, 5), date(2026, 11, 15), False),  # Sunday: the week is over
-        (date(2026, 11, 5), date(2026, 11, 14), True),  # Saturday: not yet
+        (date(2026, 11, 5), date(2026, 11, 16), False),  # next Monday: the week is over
+        (date(2026, 11, 5), date(2026, 11, 15), True),  # Sunday: still being collected
+        (date(2026, 11, 5), date(2026, 11, 9), True),  # its Monday
         (date(2026, 11, 9), date(2026, 11, 20), False),  # collection started on its Monday
         (date(2026, 11, 10), date(2026, 11, 20), True),  # and on its Tuesday
     ],
 )
 def test_week_is_partial(first_day: date, today: date, partial: bool) -> None:
-    assert week_is_partial(MONDAY, first_day=first_day, today=today) is partial
+    assert Coverage(first_day, today).week_is_partial(MONDAY) is partial
 
 
 @pytest.mark.parametrize(
-    ("month", "first_day", "today", "partial"),
+    ("month", "today", "partial"),
     [
-        (date(2026, 11, 1), date(2026, 11, 5), date(2026, 12, 3), True),  # started on the 5th
-        (date(2026, 12, 1), date(2026, 11, 5), date(2026, 12, 31), False),
-        (date(2026, 12, 1), date(2026, 11, 5), date(2026, 12, 30), True),
-        (date(2027, 2, 1), date(2026, 11, 5), date(2027, 2, 28), False),
+        (date(2026, 11, 1), date(2026, 12, 3), True),  # collection started on the 5th
+        (date(2026, 12, 1), date(2027, 1, 1), False),  # the next month began
+        (date(2026, 12, 1), date(2026, 12, 31), True),  # its last day: still being collected
+        (date(2027, 2, 1), date(2027, 2, 28), True),
+        (date(2027, 2, 1), date(2027, 3, 1), False),
     ],
 )
-def test_month_is_partial(month: date, first_day: date, today: date, partial: bool) -> None:
-    assert month_is_partial(month, first_day=first_day, today=today) is partial
+def test_month_is_partial(month: date, today: date, partial: bool) -> None:
+    assert Coverage(date(2026, 11, 5), today).month_is_partial(month) is partial
+
+
+def test_today_is_the_kyiv_day() -> None:
+    # 22:30 UTC on Sunday is 00:30 on Monday in Kyiv: the week of 9 November is over.
+    coverage = Coverage.at(date(2026, 11, 5), datetime(2026, 11, 15, 22, 30, tzinfo=UTC))
+
+    assert coverage.today == date(2026, 11, 16)
+    assert not coverage.week_is_partial(MONDAY)
 
 
 @pytest.mark.parametrize(

@@ -5,8 +5,10 @@ from pathlib import Path
 
 from alembic.config import Config
 from httpx import AsyncClient
+from sqlalchemy import Engine, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vacancy_radar.analytics.views import MATERIALIZED_VIEWS
 from vacancy_radar.auth.csrf import CSRF_COOKIE
 from vacancy_radar.auth.session import SESSION_COOKIE
 from vacancy_radar.auth.tokens import issue_token
@@ -48,6 +50,27 @@ def alembic_config(database_url: str) -> Config:
     config = Config(ALEMBIC_INI)
     config.set_main_option("sqlalchemy.url", to_sqlalchemy(database_url))
     return config
+
+
+def empty_database(engine: Engine) -> None:
+    """Empty every table, and the analytics views built from them, for good.
+
+    For tests whose code commits for real (`committed_database`).
+    Materialized views keep their rows after `TRUNCATE`, so they are
+    refreshed over the empty tables, in dependency order. Not through
+    `refresh_views`, which logs: a test may have pointed the log at a stream
+    that is closed by now.
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "TRUNCATE notification, delivery, vacancy, vacancy_cluster, skill, "
+                "exchange_rate, collect_run, raw_vacancy, source, subscription, "
+                "telegram_link_token, app_user RESTART IDENTITY"
+            )
+        )
+        for view in MATERIALIZED_VIEWS:
+            connection.execute(text(f"REFRESH MATERIALIZED VIEW {view.name}"))
 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"

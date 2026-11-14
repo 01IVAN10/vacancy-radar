@@ -5,20 +5,31 @@ Revises: 0016
 Create Date: 2026-11-15 12:00:00.000000
 
 Analytics counts jobs, not postings: a job posted on Djinni and DOU is one
-cluster (docs/deduplication.md). `analytics_job` is a plain view with one row
-per job, read from the vacancy that shows it: one with a dollar salary first,
-then the fullest (salary, company, lowest id), as on the search page. The
-materialized views aggregate it by Kyiv week or month of the job's first
-sighting, and `analytics.refresh` rebuilds them with `REFRESH ...
-CONCURRENTLY`, which needs the unique index each one has and never blocks
-readers. docs/analytics.md has the definitions.
+cluster (docs/deduplication.md). Two views describe each job, and the
+aggregates are built from them:
+
+- `analytics_job`: one row per job, from all its postings together. Its
+  skills and levels are those any posting names, and its salary is the
+  monthly dollar salary of the first posting that has one. No posting
+  "shows" the job here, so analytics never has to agree with the order that
+  picks the one the search page and Telegram show.
+- `analytics_job_source`: when the job first appeared on each source. A
+  posting can join a cluster weeks after the job first appeared elsewhere,
+  and a source's weekly series counts it in the week it appeared there, so
+  past weeks do not change.
+
+Days are Kyiv days. `analytics.refresh` rebuilds the views in the order they
+are created here, with `REFRESH ... CONCURRENTLY`, which needs the unique
+index each one has and never blocks readers. docs/analytics.md has the
+definitions.
 
 Skills and salaries count only jobs that name at least one skill from the
 dictionary: Djinni's feed has every job, sales and HR included, and their
 salaries would say nothing about the IT market.
 
-The views read `vacancy` columns, so a later migration that changes the type
-of one of them must drop and recreate the views.
+The word 'all' marks the series of every level and of every source; it is
+`domain.analytics.ALL`. The views read `vacancy` columns, so a later
+migration that changes the type of one of them must drop and recreate them.
 """
 
 from collections.abc import Sequence
@@ -32,24 +43,60 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 JOB = """
-CREATE VIEW analytics_job AS
-SELECT DISTINCT ON (v.cluster_id)
-    v.cluster_id AS job_id,
+CREATE MATERIALIZED VIEW analytics_job AS
+WITH postings AS (
+    SELECT cluster_id, count(*)::int AS postings
+    FROM vacancy
+    WHERE cluster_id IS NOT NULL
+    GROUP BY cluster_id
+), skills AS (
+    SELECT v.cluster_id, array_agg(DISTINCT skill ORDER BY skill) AS skills
+    FROM vacancy v CROSS JOIN LATERAL unnest(v.skills) AS skill
+    WHERE v.cluster_id IS NOT NULL
+    GROUP BY v.cluster_id
+), levels AS (
+    SELECT v.cluster_id, array_agg(DISTINCT level ORDER BY level) AS seniority
+    FROM vacancy v CROSS JOIN LATERAL unnest(v.seniority) AS level
+    WHERE v.cluster_id IS NOT NULL
+    GROUP BY v.cluster_id
+), pay AS (
+    SELECT DISTINCT ON (cluster_id)
+        cluster_id,
+        CASE
+            WHEN salary_usd_min IS NOT NULL AND salary_usd_max IS NOT NULL
+                THEN (salary_usd_min + salary_usd_max) / 2.0
+            ELSE coalesce(salary_usd_min, salary_usd_max)
+        END AS salary_usd
+    FROM vacancy
+    WHERE cluster_id IS NOT NULL
+        AND (salary_usd_min IS NOT NULL OR salary_usd_max IS NOT NULL)
+    ORDER BY cluster_id, id
+)
+SELECT
+    c.id AS job_id,
     (c.first_seen_at AT TIME ZONE 'Europe/Kyiv')::date AS first_seen_on,
-    v.skills,
-    v.seniority,
-    CASE
-        WHEN v.salary_usd_min IS NOT NULL AND v.salary_usd_max IS NOT NULL
-            THEN (v.salary_usd_min + v.salary_usd_max) / 2.0
-        ELSE coalesce(v.salary_usd_min, v.salary_usd_max)
-    END AS salary_usd
+    p.postings,
+    coalesce(s.skills, '{}') AS skills,
+    coalesce(l.seniority, '{}') AS seniority,
+    pay.salary_usd
+FROM postings p
+JOIN vacancy_cluster c ON c.id = p.cluster_id
+LEFT JOIN skills s ON s.cluster_id = c.id
+LEFT JOIN levels l ON l.cluster_id = c.id
+LEFT JOIN pay ON pay.cluster_id = c.id
+"""
+
+JOB_SOURCE = """
+CREATE MATERIALIZED VIEW analytics_job_source AS
+SELECT
+    v.cluster_id AS job_id,
+    s.slug AS source,
+    (min(r.first_seen_at) AT TIME ZONE 'Europe/Kyiv')::date AS first_seen_on
 FROM vacancy v
-JOIN vacancy_cluster c ON c.id = v.cluster_id
-ORDER BY v.cluster_id,
-    (v.salary_usd_min IS NULL AND v.salary_usd_max IS NULL),
-    v.salary_currency IS NULL,
-    v.company IS NULL,
-    v.id
+JOIN raw_vacancy r ON r.id = v.raw_vacancy_id
+JOIN source s ON s.id = v.source_id
+WHERE v.cluster_id IS NOT NULL
+GROUP BY v.cluster_id, s.slug
 """
 
 SKILL_MONTHLY = """
@@ -90,27 +137,22 @@ GROUP BY week, level
 
 JOBS_WEEKLY = """
 CREATE MATERIALIZED VIEW analytics_jobs_weekly AS
-WITH sources AS (
-    SELECT DISTINCT v.cluster_id AS job_id, s.slug
-    FROM vacancy v
-    JOIN source s ON s.id = v.source_id
-    WHERE v.cluster_id IS NOT NULL
-), jobs AS (
-    SELECT job_id, date_trunc('week', first_seen_on)::date AS week,
-        cardinality(skills) > 0 AS with_skills
-    FROM analytics_job
-), by_source AS (
-    SELECT week, 'all' AS source, with_skills FROM jobs
-    UNION ALL
-    SELECT jobs.week, sources.slug, jobs.with_skills FROM jobs JOIN sources USING (job_id)
-)
 SELECT
-    week,
-    source,
+    date_trunc('week', first_seen_on)::date AS week,
+    'all' AS source,
     count(*)::int AS jobs,
-    count(*) FILTER (WHERE with_skills)::int AS with_skills
-FROM by_source
-GROUP BY week, source
+    count(*) FILTER (WHERE cardinality(skills) > 0)::int AS with_skills
+FROM analytics_job
+GROUP BY 1
+UNION ALL
+SELECT
+    date_trunc('week', js.first_seen_on)::date,
+    js.source,
+    count(*)::int,
+    count(*) FILTER (WHERE cardinality(j.skills) > 0)::int
+FROM analytics_job_source js
+JOIN analytics_job j USING (job_id)
+GROUP BY 1, 2
 """
 
 SUMMARY = """
@@ -119,7 +161,7 @@ SELECT
     1 AS id,
     now() AS refreshed_at,
     count(*)::int AS jobs,
-    (SELECT count(*)::int FROM vacancy WHERE cluster_id IS NOT NULL) AS postings,
+    coalesce(sum(postings), 0)::int AS postings,
     count(*) FILTER (WHERE cardinality(skills) > 0)::int AS with_skills,
     count(*) FILTER (WHERE cardinality(skills) > 0 AND salary_usd IS NOT NULL)::int AS with_salary,
     min(first_seen_on) AS first_day,
@@ -127,8 +169,11 @@ SELECT
 FROM analytics_job
 """
 
-# Each view with the columns of its unique index, which REFRESH ... CONCURRENTLY needs.
+# In dependency order, each with the columns of the unique index that
+# REFRESH ... CONCURRENTLY needs.
 VIEWS = {
+    "analytics_job": (JOB, "job_id"),
+    "analytics_job_source": (JOB_SOURCE, "job_id, source"),
     "analytics_skill_monthly": (SKILL_MONTHLY, "month, skill"),
     "analytics_salary_weekly": (SALARY_WEEKLY, "week, level"),
     "analytics_jobs_weekly": (JOBS_WEEKLY, "week, source"),
@@ -137,7 +182,6 @@ VIEWS = {
 
 
 def upgrade() -> None:
-    op.execute(sa.text(JOB))
     for name, (definition, key) in VIEWS.items():
         op.execute(sa.text(definition))
         op.execute(sa.text(f"CREATE UNIQUE INDEX uq_{name} ON {name} ({key})"))
@@ -146,4 +190,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     for name in reversed(VIEWS):
         op.execute(sa.text(f"DROP MATERIALIZED VIEW {name}"))
-    op.execute(sa.text("DROP VIEW analytics_job"))
