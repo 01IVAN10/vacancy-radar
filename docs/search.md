@@ -56,7 +56,7 @@ These follow from `simple` and are pinned by tests in `tests/db/test_fts.py`:
 
 ## The search page
 
-`GET /vacancies` (`api/search.py`) takes the search as query parameters, so a search is a link that can be shared. The form works without JavaScript. With HTMX, a change to the form replaces only the results and pushes the new URL, and going back loads the whole page again. `search/service.py:search_jobs` does the work; `domain/search.py` checks the form.
+`GET /vacancies` (`api/search.py`) takes the search as query parameters, so a search is a link that can be shared. The form works without JavaScript. With HTMX, a change to the form replaces only the results and pushes the new URL. Going back asks the server for the whole page, which renders the form from the URL: the page keeps no HTMX history snapshot (`hx-history="false"`), because a snapshot keeps the markup but not what was ticked or typed, and would show old results under a reset form (found by hand). `search/service.py:search_jobs` does the work; `domain/search.py` checks the form.
 
 - **A result is a job, not a posting.** A job is a cluster (`docs/deduplication.md`), so a vacancy posted on Djinni and DOU is one result with a link to each posting ("Open on Djinni · DOU"). A vacancy that has no cluster yet is not shown; `notify.match` clusters new vacancies every few minutes.
 - **Which vacancy shows the job.** A job is found when one of its vacancies has the words and passes every filter. Of those, the best ranked one shows it, then the most complete one: with a salary, then with a company, then the oldest (`clusters/showing.py:fullest_first`, the same order as Telegram messages). So a job filtered by source shows its posting from that source.

@@ -1,4 +1,4 @@
-{# Checkbox groups shared by the subscription form and the search form. #}
+{# Form controls shared by the subscription form and the search form. #}
 
 {# Skills grouped by category; a group with a chosen skill starts open. #}
 {% macro skill_picker(skill_groups, chosen) %}
@@ -40,4 +40,14 @@
       {{ label }}
     </label>
   {% endfor %}
+{% endmacro %}
+
+{# A whole number of dollars a month: "3000", "3,000" or "3 000". The browser refuses
+   anything else before sending, and the server checks it again (`domain/choices.py`),
+   because a form can be sent without a browser. #}
+{% macro monthly_usd_input(value, invalid=false, described_by=none) %}
+  <input type="text" name="min_salary_usd" value="{{ value }}" inputmode="numeric"
+         pattern="[0-9][0-9, ]*" title="A whole number of dollars, such as 3000"
+         placeholder="3000"
+         {%- if invalid %} aria-invalid="true"{% if described_by %} aria-describedby="{{ described_by }}"{% endif %}{% endif %}>
 {% endmacro %}

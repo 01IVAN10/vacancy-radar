@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% from "_choices.html" import checkboxes, skill_picker, skills_match_choice %}
+{% from "_choices.html" import checkboxes, monthly_usd_input, skill_picker, skills_match_choice %}
 {% block title %}{{ heading }} · Vacancy Radar{% endblock %}
 {% block content %}
 <article>
   <h1>{{ heading }}</h1>
-  <form method="post" action="{{ action }}" novalidate>
+  {# Browser checks (required name, salary pattern) run first; the server checks everything again. #}
+  <form method="post" action="{{ action }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if notice %}<p role="alert"><mark>{{ notice }}</mark></p>{% endif %}
     {% if errors.filter %}<p role="alert"><mark>{{ errors.filter }}</mark></p>{% endif %}
@@ -42,9 +43,7 @@
       <legend>Salary</legend>
       <label>
         Minimum, US dollars per month
-        <input type="text" name="min_salary_usd" value="{{ form.min_salary_usd }}"
-               inputmode="numeric" placeholder="3000"
-               {% if errors.min_salary_usd %}aria-invalid="true" aria-describedby="salary-error"{% endif %}>
+        {{ monthly_usd_input(form.min_salary_usd, invalid=errors.min_salary_usd, described_by="salary-error") }}
         {% if errors.min_salary_usd %}<small id="salary-error">{{ errors.min_salary_usd }}</small>{% endif %}
       </label>
       <label>

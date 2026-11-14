@@ -84,10 +84,18 @@ async def test_htmx_gets_only_the_results(client: AsyncClient, async_session: As
     assert response.headers["Vary"] == "HX-Request"
 
 
-async def test_going_back_loads_the_whole_page(client: AsyncClient) -> None:
-    response = await client.get("/vacancies", headers=HTMX | {"HX-History-Restore-Request": "true"})
+async def test_going_back_loads_the_whole_page_with_its_form(client: AsyncClient) -> None:
+    response = await client.get(
+        "/vacancies",
+        params={"q": "python", "seniority": "senior"},
+        headers=HTMX | {"HX-History-Restore-Request": "true"},
+    )
 
     assert "<html" in response.text
+    # No snapshot: a snapshot would restore old results under a reset form.
+    assert 'hx-history="false"' in response.text
+    assert 'value="python"' in response.text
+    assert 'value="senior"\n             checked' in response.text
 
 
 async def test_an_invalid_form_is_shown_again_with_its_errors(client: AsyncClient) -> None:
@@ -185,4 +193,12 @@ async def test_every_page_links_to_the_search(client: AsyncClient) -> None:
     response = await client.get("/")
 
     assert '<a href="/vacancies">Vacancies</a>' in response.text
-    assert '<form method="get" action="/vacancies" role="search">' in response.text
+    assert '<form method="get" action="/vacancies">\n  <fieldset role="search">' in response.text
+
+
+async def test_the_salary_field_takes_only_digits_before_sending(client: AsyncClient) -> None:
+    response = await client.get("/vacancies")
+
+    assert 'name="min_salary_usd"' in response.text
+    assert 'pattern="[0-9][0-9, ]*"' in response.text
+    assert " novalidate" not in response.text

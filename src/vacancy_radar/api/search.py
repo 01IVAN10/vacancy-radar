@@ -2,8 +2,10 @@
 
 `GET /vacancies` takes the search as query parameters, so a search is a link
 that can be shared or bookmarked. The form works without JavaScript. With
-HTMX it replaces only the results and pushes the new URL; going back loads
-the whole page again (`HX-History-Restore-Request`). An invalid form is
+HTMX it replaces only the results and pushes the new URL. The page keeps no
+HTMX history snapshot, which would lose the form's state, so going back asks
+for the whole page again (`HX-History-Restore-Request`) and the form is
+rendered from the URL. An invalid form is
 shown again with its errors and status 422.
 """
 
