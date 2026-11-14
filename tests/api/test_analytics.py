@@ -93,9 +93,10 @@ async def test_shows_the_three_aggregates_with_their_sample_sizes(
     assert data["jobs"] == {
         "labels": ["9 Nov*"],
         "series": [
-            {"name": "All sources", "values": [4]},
-            {"name": "Djinni", "values": [3]},
-            {"name": "DOU", "values": [1]},
+            # A series is coloured by its key, so a new source cannot repaint the others.
+            {"key": "total", "name": "All sources", "values": [4]},
+            {"key": "djinni", "name": "Djinni", "values": [3]},
+            {"key": "dou", "name": "DOU", "values": [1]},
         ],
     }
 
@@ -172,8 +173,25 @@ async def test_a_month_without_data(client: AsyncClient, async_session: AsyncSes
 
     html = await page(client, async_session, month="2025-01")
 
+    # The heading and the form name the same month, so sending the form keeps it.
+    assert "Top skills, January 2025" in html
+    assert re.findall(r'<option value="(\d{4}-\d{2})"', html) == ["2026-11", "2025-01"]
+    assert '<option value="2025-01" selected>January 2025</option>' in html
     assert "No jobs with skills were first seen in January 2025." in html
     assert chart_data(html)["skills"]["labels"] == []
+
+
+async def test_before_any_job_names_a_skill(
+    client: AsyncClient, async_session: AsyncSession
+) -> None:
+    await jobs(async_session, 1, skills=[])
+
+    html = await page(client, async_session)
+
+    assert "<h2>Top skills</h2>" in html
+    assert "No job names a known skill yet." in html
+    assert 'name="month"' not in html
+    assert "Top skills," not in html
 
 
 async def test_marks_periods_that_are_partial_or_not_final(

@@ -12,7 +12,7 @@ from vacancy_radar import __version__
 from vacancy_radar.api import analytics, auth, health, pages, search, subscriptions, telegram
 from vacancy_radar.api.deps import LoginRequiredError, Sessions, WebConfig
 from vacancy_radar.api.middleware import CurrentUserMiddleware
-from vacancy_radar.api.templating import STATIC_DIR, templates
+from vacancy_radar.api.templating import STATIC_DIR, STATIC_PATH, templates
 from vacancy_radar.auth.csrf import CSRFCookieMiddleware
 from vacancy_radar.config import Settings, get_settings
 from vacancy_radar.db.engine import get_async_sessionmaker
@@ -48,7 +48,7 @@ def create_app(settings: Settings | None = None, sessions: Sessions | None = Non
     app.include_router(auth.router)
     app.include_router(subscriptions.router)
     app.include_router(telegram.router)
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount(STATIC_PATH, StaticFiles(directory=STATIC_DIR), name="static")
     return app
 
 

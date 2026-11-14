@@ -5,6 +5,7 @@ from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from vacancy_radar.api.deps import WebConfig
+from vacancy_radar.api.templating import STATIC_PATH
 from vacancy_radar.auth.session import SignedInUser, user_id_from
 from vacancy_radar.db.models import User
 
@@ -16,7 +17,8 @@ class CurrentUserMiddleware:
     error pages included, renders the navigation for the right person, and no
     route can forget to ask. A missing, expired or forged token and a deleted
     account all mean signed out. Requests without a session cookie, such as
-    health checks, do not touch the database.
+    health checks, do not touch the database, and neither do static files,
+    which render no navigation.
     """
 
     def __init__(self, app: ASGIApp, *, config: WebConfig) -> None:
@@ -25,7 +27,9 @@ class CurrentUserMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
-            scope.setdefault("state", {})["user"] = await self._load(HTTPConnection(scope))
+            static = scope["path"].startswith(f"{STATIC_PATH}/")
+            user = None if static else await self._load(HTTPConnection(scope))
+            scope.setdefault("state", {})["user"] = user
         await self.app(scope, receive, send)
 
     async def _load(self, connection: HTTPConnection) -> SignedInUser | None:

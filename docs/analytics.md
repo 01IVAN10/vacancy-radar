@@ -57,9 +57,12 @@ The rules are `domain/analytics.py`. The views keep every number; `analytics/ser
 - **Every chart has a table** with the same numbers under it, so the page reads without JavaScript and with a screen reader.
 - **No inline script.** The numbers are a JSON block (`<script type="application/json">`), and `static/analytics.js` draws them with Chart.js from a CDN, pinned with SRI like Pico and HTMX. So the Content Security Policy of stage 11 can forbid inline scripts. Jinja's `tojson` escapes `<`, `>` and `&`, so a value such as `</script>` cannot end the block.
 - **A hidden median is not sent at all**: its quartiles are `null` in the JSON and absent from the table, and only its `n` is shown.
-- **The choices are a plain GET form,** so a chart is a link, and Back restores the page and the form. With JavaScript, changing a choice sends the form; without it, the button does. No HTMX: the page is not swapped in parts, so the charts never have to be drawn again after a swap.
-- **The choices are checked in `domain/analytics.py`** (`build_analytics_query`): an unknown month or level is a 422 with a message. Every level together is the empty choice, never the views' word `all`. A valid month without data shows that there is none.
-- **Incomplete periods carry an asterisk** on the charts and in the tables, and the captions say from which week the numbers are not final.
+- **The choices are a plain GET form sent by its button,** so a chart is a link, and Back restores the page and the form. It is not sent when a choice changes: a closed select changes on every arrow key, so a keyboard user would reload the page at each step (found in review; WCAG 3.2.2). No HTMX: the page is not swapped in parts, so the charts never have to be drawn again after a swap.
+- **The choices are checked in `domain/analytics.py`** (`build_analytics_query`): an unknown month or level is a 422 with a message. Every level together is the empty choice, never the views' word `all`. `read_analytics` returns the month it shows (`Analytics.month`) as it returns the level, and the page takes both from there. A valid month without data shows that there is none, and the form offers that month too, so the heading and the form agree and sending the form again keeps it (found in review: the form showed the newest month and moved the page to it).
+- **The JSON block is typed** (`ChartData` in `api/analytics.py`): every list of a chart is a column of its table, built from the same rows, so mypy checks what `static/analytics.js` reads. A series of new jobs carries a key (`total` or a source slug), and the script picks its colour by that key, so a new source cannot repaint Djinni and DOU.
+- **Sources come from the `source` table** through `db/sources.py`, the one reader that search uses too, so both pages offer the same sites in the same order.
+- **Incomplete periods carry an asterisk** on the charts and in the tables (one function, `week_label`), and the captions say from which week the numbers are not final.
+- **Dates are spelled out in English** (`api/templating.py`), not with `strftime`, whose month names follow the process locale.
 
 ## Refresh
 

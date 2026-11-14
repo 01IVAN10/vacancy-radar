@@ -7,13 +7,13 @@ stored in a URL the browser keeps in its history. That page points back to
 again and replace the token the user may be about to press Start with.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC
 from typing import Final
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from vacancy_radar.api.deps import Config, CurrentUser, DbSession, WebConfig, require_user
+from vacancy_radar.api.deps import Config, CurrentUser, DbSession, Now, WebConfig, require_user
 from vacancy_radar.api.templating import templates
 from vacancy_radar.auth.csrf import verify_csrf
 from vacancy_radar.auth.session import SignedInUser
@@ -37,11 +37,11 @@ async def page(request: Request, user: CurrentUser, config: Config) -> HTMLRespo
     name="telegram_link",
 )
 async def link(
-    request: Request, session: DbSession, user: CurrentUser, config: Config
+    request: Request, session: DbSession, user: CurrentUser, config: Config, now: Now
 ) -> HTMLResponse:
     if config.telegram_bot_username is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Telegram is not set up.")
-    token = await linking.issue_link_token(session, user.id, now=datetime.now(UTC))
+    token = await linking.issue_link_token(session, user.id, now=now)
     return _page(request, user, config, link=linking.deep_link(config.telegram_bot_username, token))
 
 

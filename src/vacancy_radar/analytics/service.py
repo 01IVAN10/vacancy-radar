@@ -21,7 +21,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vacancy_radar.analytics.views import jobs_weekly, salary_weekly, skill_monthly, summary
-from vacancy_radar.db.models import Source
 from vacancy_radar.domain.analytics import ALL, Coverage, Quartiles, SalaryWeek, salary_week, share
 from vacancy_radar.domain.seniority import Level
 from vacancy_radar.domain.skills import SKILLS_BY_SLUG
@@ -76,19 +75,14 @@ class JobsWeek:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceSite:
-    """A site the data come from, to name and link on the page."""
-
-    name: str
-    url: str
-
-
-@dataclass(frozen=True, slots=True)
 class Analytics:
     summary: Summary
     # Months with skill counts, newest first.
     months: tuple[date, ...]
-    # The month asked for, or the newest; None for a month without data.
+    # The month of top skills: the one asked for, or the newest with data;
+    # None when no job names a skill yet.
+    month: date | None
+    # Top skills of `month`; None when it has no data.
     top_skills: TopSkills | None
     # Weekly salaries of one level, or of every level when None, oldest week first.
     level: Level | None
@@ -97,8 +91,6 @@ class Analytics:
     jobs_total: tuple[JobsWeek, ...]
     # ...and by source slug, a job on two sources in both.
     jobs_by_source: dict[str, tuple[JobsWeek, ...]]
-    # Every source by its slug, in slug order: the sites to credit.
-    sources: dict[str, SourceSite]
 
 
 async def read_analytics(
@@ -119,12 +111,12 @@ async def read_analytics(
     return Analytics(
         summary=totals,
         months=available,
+        month=chosen,
         top_skills=await _top_skills(session, chosen, coverage) if chosen else None,
         level=level,
         salaries=await _salaries(session, level or ALL, coverage),
         jobs_total=jobs.pop(ALL, ()),
         jobs_by_source=jobs,
-        sources=await _sources(session),
     )
 
 
@@ -209,10 +201,3 @@ async def _jobs(session: AsyncSession, coverage: Coverage) -> dict[str, tuple[Jo
             )
         )
     return {source: tuple(weeks) for source, weeks in series.items()}
-
-
-async def _sources(session: AsyncSession) -> dict[str, SourceSite]:
-    rows = await session.execute(
-        select(Source.slug, Source.name, Source.base_url).order_by(Source.slug)
-    )
-    return {row.slug: SourceSite(row.name, row.base_url) for row in rows}

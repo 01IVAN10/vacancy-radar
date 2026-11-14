@@ -26,34 +26,36 @@
   {% set summary = data.summary %}
   <section aria-label="What the numbers cover">
     <p>
-      <strong>{{ "{:,}".format(summary.jobs) }}</strong> jobs
-      ({{ "{:,}".format(summary.postings) }} postings) since {{ first_day }};
-      {{ "{:,}".format(summary.with_skills) }} of them name a known skill, and only those count
+      <strong>{{ summary.jobs | thousands }}</strong> jobs
+      ({{ summary.postings | thousands }} postings) since {{ summary.first_day | day }};
+      {{ summary.with_skills | thousands }} of them name a known skill, and only those count
       in skills and salaries.
       {{ salary_share }}% of these state a monthly salary in dollars
-      (n = {{ "{:,}".format(summary.with_salary) }}).
+      (n = {{ summary.with_salary | thousands }}).
     </p>
     <p><small>
       Updated {{ refreshed }}.
       Sources:
-      {% for site in data.sources.values() -%}
+      {% for site in sources.values() -%}
         <a href="{{ site.url }}" rel="noopener">{{ site.name }}</a>{% if not loop.last %}, {% endif %}
       {%- endfor %}.
       An asterisk (*) marks a week or month the data cover only in part: collection started
-      on {{ first_day }}, and the current period is not over.
+      on {{ summary.first_day | day }}, and the current period is not over.
     </small></p>
   </section>
 
-  <form method="get" action="{{ url_for('analytics').path }}" id="analytics-choices">
+  <form method="get" action="{{ url_for('analytics').path }}">
     <div class="grid">
-      <label>
-        Month of top skills
-        <select name="month">
-          {% for value, label in months.items() %}
-            <option value="{{ value }}" {% if value == chosen_month %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
+      {% if month_options %}
+        <label>
+          Month of top skills
+          <select name="month">
+            {% for value, label in month_options.items() %}
+              <option value="{{ value }}" {% if value == chosen_month %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      {% endif %}
       <label>
         Level of salaries
         <select name="level">
@@ -71,36 +73,41 @@
   <script type="application/json" id="analytics-data">{{ chart_data | tojson }}</script>
 
   <figure>
-    <h2 id="skills-title">Top skills, {{ chosen_month_label }}{% if data.top_skills and data.top_skills.partial %}*{% endif %}</h2>
     {% set top = data.top_skills %}
-    {% if not top %}
-      <p>No jobs with skills were first seen in {{ chosen_month_label or "this month" }}.</p>
+    {% if not data.month %}
+      <h2>Top skills</h2>
+      <p>No job names a known skill yet.</p>
     {% else %}
-      <div class="chart"><canvas id="skills-chart" aria-labelledby="skills-title" role="img"></canvas></div>
-      <figcaption>
-        Share of the {{ "{:,}".format(top.jobs) }} jobs that name a skill and were first seen that month.
-        {% if top.settling %}Not final: postings that join a job later may still add skills.{% endif %}
-      </figcaption>
-      <table class="striped">
-        <thead>
-          <tr><th scope="col">Skill</th><th scope="col" class="number">Jobs</th><th scope="col" class="number">Share</th></tr>
-        </thead>
-        <tbody>
-          {% for skill in top.skills %}
-            <tr>
-              <th scope="row">{{ skill.name }}</th>
-              <td class="number">{{ "{:,}".format(skill.n) }} of {{ "{:,}".format(top.jobs) }}</td>
-              <td class="number">{{ skill.share }}%</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <h2 id="skills-title">Top skills, {{ month_heading(data.month, top.partial if top else false) }}</h2>
+      {% if not top %}
+        <p>No jobs with skills were first seen in {{ data.month | month }}.</p>
+      {% else %}
+        <div class="chart"><canvas id="skills-chart" aria-labelledby="skills-title" role="img"></canvas></div>
+        <figcaption>
+          Share of the {{ top.jobs | thousands }} jobs that name a skill and were first seen that month.
+          {% if top.settling %}Not final: postings that join a job later may still add skills.{% endif %}
+        </figcaption>
+        <table class="striped">
+          <thead>
+            <tr><th scope="col">Skill</th><th scope="col" class="number">Jobs</th><th scope="col" class="number">Share</th></tr>
+          </thead>
+          <tbody>
+            {% for skill in top.skills %}
+              <tr>
+                <th scope="row">{{ skill.name }}</th>
+                <td class="number">{{ skill.n | thousands }} of {{ top.jobs | thousands }}</td>
+                <td class="number">{{ skill.share }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
     {% endif %}
   </figure>
 
   <figure>
     <h2 id="salaries-title">Salaries by week, {{ level_label }}</h2>
-    {% if not salaries %}
+    {% if not data.salaries %}
       <p>No jobs of this level state a monthly salary in dollars yet.</p>
     {% else %}
       <div class="chart"><canvas id="salaries-chart" aria-labelledby="salaries-title" role="img"></canvas></div>
@@ -121,15 +128,14 @@
           </tr>
         </thead>
         <tbody>
-          {% for row in salaries %}
-            {% set week = row.salaries %}
+          {% for week in data.salaries %}
             <tr>
-              <th scope="row">{{ day(row.week) }}{% if week.partial %}*{% endif %}</th>
-              <td class="number">{{ "{:,}".format(week.n) }}</td>
+              <th scope="row">{{ week_label(week.week, week.partial) }}</th>
+              <td class="number">{{ week.n | thousands }}</td>
               {% if week.quartiles %}
-                <td class="number">${{ "{:,}".format(week.quartiles.p25) }}</td>
-                <td class="number">${{ "{:,}".format(week.quartiles.median) }}</td>
-                <td class="number">${{ "{:,}".format(week.quartiles.p75) }}</td>
+                <td class="number">${{ week.quartiles.p25 | thousands }}</td>
+                <td class="number">${{ week.quartiles.median | thousands }}</td>
+                <td class="number">${{ week.quartiles.p75 | thousands }}</td>
               {% else %}
                 <td colspan="3"><small>hidden: fewer than {{ min_sample }} salaries</small></td>
               {% endif %}
@@ -153,17 +159,17 @@
         <tr>
           <th scope="col">Week of</th>
           <th scope="col" class="number">All sources</th>
-          {% for name in source_names.values() %}<th scope="col" class="number">{{ name }}</th>{% endfor %}
+          {% for site in sources.values() %}<th scope="col" class="number">{{ site.name }}</th>{% endfor %}
           <th scope="col" class="number">Name a skill</th>
         </tr>
       </thead>
       <tbody>
         {% for row in jobs %}
           <tr>
-            <th scope="row">{{ day(row.week) }}{% if row.total.partial %}*{% endif %}</th>
-            <td class="number">{{ "{:,}".format(row.total.jobs) }}</td>
-            {% for slug in source_names %}<td class="number">{{ "{:,}".format(row.by_source[slug]) }}</td>{% endfor %}
-            <td class="number">{{ "{:,}".format(row.total.with_skills) }}</td>
+            <th scope="row">{{ week_label(row.total.week, row.total.partial) }}</th>
+            <td class="number">{{ row.total.jobs | thousands }}</td>
+            {% for slug in sources %}<td class="number">{{ row.by_source[slug] | thousands }}</td>{% endfor %}
+            <td class="number">{{ row.total.with_skills | thousands }}</td>
           </tr>
         {% endfor %}
       </tbody>

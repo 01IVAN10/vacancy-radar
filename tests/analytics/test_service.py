@@ -10,7 +10,6 @@ from vacancy_radar.analytics.service import (
     Analytics,
     JobsWeek,
     SkillCount,
-    SourceSite,
     read_analytics,
 )
 from vacancy_radar.domain.analytics import MIN_SAMPLE, Quartiles
@@ -69,6 +68,7 @@ async def test_top_skills_of_the_newest_month_with_names_and_shares(
     result = await analytics(async_session)
 
     assert result.months == (NOVEMBER, date(2026, 10, 1))
+    assert result.month == NOVEMBER
     top = result.top_skills
     assert top is not None
     assert (top.month, top.jobs, top.partial, top.settling) == (NOVEMBER, 4, True, True)
@@ -79,6 +79,14 @@ async def test_top_skills_of_the_newest_month_with_names_and_shares(
     )
 
 
+async def test_no_month_before_any_job_names_a_skill(async_session: AsyncSession) -> None:
+    await jobs(async_session, 1, skills=[])
+
+    result = await analytics(async_session)
+
+    assert (result.months, result.month, result.top_skills) == ((), None, None)
+
+
 async def test_top_skills_of_a_chosen_month(async_session: AsyncSession) -> None:
     await jobs(async_session, 1, skills=["go"], first_seen_at=THURSDAY - timedelta(days=30))
     await jobs(async_session, 1)
@@ -86,10 +94,12 @@ async def test_top_skills_of_a_chosen_month(async_session: AsyncSession) -> None
     october = await analytics(async_session, month=date(2026, 10, 1))
     empty = await read_analytics(async_session, NOW, month=date(2026, 9, 1))
 
+    assert october.month == date(2026, 10, 1)
     assert october.top_skills is not None
     assert [skill.slug for skill in october.top_skills.skills] == ["go"]
+    # The month asked for stays the month shown, even without data.
     assert empty is not None
-    assert empty.top_skills is None
+    assert (empty.month, empty.top_skills) == (date(2026, 9, 1), None)
 
 
 async def test_salary_medians_below_the_minimum_sample_are_hidden(
@@ -141,18 +151,6 @@ async def test_jobs_by_week_and_source(async_session: AsyncSession) -> None:
     assert result.jobs_by_source == {
         "djinni": (JobsWeek(week, 1, 0, partial=False, settling=True),),
         "dou": (JobsWeek(week, 2, 2, partial=False, settling=True),),
-    }
-
-
-async def test_names_every_source_with_its_site(async_session: AsyncSession) -> None:
-    await jobs(async_session, 1, source="dou")
-    await jobs(async_session, 1, source="djinni")
-
-    result = await analytics(async_session)
-
-    assert result.sources == {
-        "djinni": SourceSite("Djinni", "https://djinni.co"),
-        "dou": SourceSite("DOU", "https://jobs.dou.ua"),
     }
 
 

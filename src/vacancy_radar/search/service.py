@@ -184,9 +184,3 @@ async def _postings(
     ):
         found[cluster_id].append(Posting(source_name, url))
     return {cluster_id: tuple(postings) for cluster_id, postings in found.items()}
-
-
-async def source_names(session: AsyncSession) -> dict[str, str]:
-    """Every source's name by its slug, in slug order: what the source filter offers."""
-    rows = await session.execute(select(Source.slug, Source.name).order_by(Source.slug))
-    return dict(rows.all())
