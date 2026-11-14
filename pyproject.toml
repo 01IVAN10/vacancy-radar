@@ -68,6 +68,10 @@ known-first-party = ["vacancy_radar", "tests"]
 # tests are full of Cyrillic letters and en dashes that RUF001-003 flag as
 # look-alikes of ASCII characters.
 "src/vacancy_radar/domain/**" = ["RUF001", "RUF002", "RUF003"]
+# Search joins Ukrainian words at their apostrophes, so these name Cyrillic
+# letters and the apostrophe look-alikes on purpose.
+"src/vacancy_radar/db/fts.py" = ["RUF001", "RUF002", "RUF003"]
+"migrations/versions/0015_full_text_search_on_vacancy.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/**" = [
     "S101",   # assert is how pytest works
     "S105",   # test accounts have fixed passwords, keys and tokens on purpose

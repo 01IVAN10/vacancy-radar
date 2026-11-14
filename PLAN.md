@@ -149,7 +149,7 @@ Decisions (2026-11-09, measured on the Neon backup of that day, details in `docs
 - **Numbers and symbols stay in titles.** "C#", "C++" and "C" are different words, and so are "Level 1" and "Level 2" (found in review); an internal number added on one site only is covered by the subset rule.
 
 ### Stage 9: Search and analytics
-- [ ] FTS `search_vector` (`simple` + `unaccent`), GIN on it and on `skills` (the trigram index on `title` exists since stage 8: `ix_vacancy_title_trgm`)
+- [x] FTS `search_vector` (`simple` + `unaccent`), GIN on it and on `skills` (the trigram index on `title` exists since stage 8: `ix_vacancy_title_trgm`; see `docs/search.md`)
 - [ ] Vacancy search page: FTS + filters + pagination
 - [ ] Materialized views: top skills per month, salary ranges per week, new vacancies per week (each with `n`)
 - [ ] Periodic refresh task

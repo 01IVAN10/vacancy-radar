@@ -42,7 +42,7 @@ Normalization does not run in the GitHub Actions job yet. Neon only accumulates 
 | `skills` | title + description | position + description |
 | `description` | description as plain text | description as plain text |
 
-`description` is stored for deduplication (stage 8) and search (stage 9). Public pages never show it in full: they show an excerpt and link to the original (`CLAUDE.md`, legal data collection). Rows written before `NORMALIZER_VERSION` 3 have an empty description until they are rebuilt.
+`description` is stored for deduplication (stage 8) and search (stage 9, `docs/search.md`). Postgres derives `search_vector` from the title, company and description itself, so normalization does not write it. Public pages never show it in full: they show an excerpt and link to the original (`CLAUDE.md`, legal data collection). Rows written before `NORMALIZER_VERSION` 3 have an empty description until they are rebuilt.
 
 All text first goes through `domain/text.py`: HTML to text, entities unescaped (also double-escaped ones), NFKC (Unicode bold letters become plain), and whitespace collapsed.
 
