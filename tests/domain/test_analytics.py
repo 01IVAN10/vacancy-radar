@@ -4,9 +4,14 @@ import pytest
 
 from vacancy_radar.domain.analytics import (
     MIN_SAMPLE,
+    AnalyticsForm,
+    AnalyticsQuery,
     Coverage,
+    InvalidAnalyticsError,
     Quartiles,
     SalaryWeek,
+    build_analytics_query,
+    month_param,
     salary_week,
     share,
 )
@@ -85,3 +90,44 @@ def test_today_is_the_kyiv_day() -> None:
 )
 def test_share(n: int, total: int, percent: float) -> None:
     assert share(n, total) == percent
+
+
+def test_an_empty_form_asks_for_the_newest_month_and_every_level() -> None:
+    assert build_analytics_query(AnalyticsForm()) == AnalyticsQuery(month=None, level=None)
+
+
+def test_a_month_and_a_level() -> None:
+    query = build_analytics_query(AnalyticsForm(month="2026-10", level="senior"))
+
+    assert query == AnalyticsQuery(month=date(2026, 10, 1), level="senior")
+
+
+def test_a_month_reads_back_as_written() -> None:
+    assert month_param(date(2026, 3, 1)) == "2026-03"
+    assert build_analytics_query(AnalyticsForm(month="2026-03")).month == date(2026, 3, 1)
+
+
+@pytest.mark.parametrize(
+    "month", ["2026-13", "2026-00", "2026-1", "26-11", "2026-11-01", "1999-12", "２０２６-11"]
+)
+def test_an_invalid_month_is_refused(month: str) -> None:
+    with pytest.raises(InvalidAnalyticsError) as error:
+        build_analytics_query(AnalyticsForm(month=month))
+
+    assert error.value.errors == {"month": "Choose a month such as 2026-11."}
+
+
+@pytest.mark.parametrize("level", ["all", "Senior", "architect"])
+def test_an_unknown_level_is_refused(level: str) -> None:
+    # "all" is the views' word for every level; the page sends an empty level instead.
+    with pytest.raises(InvalidAnalyticsError) as error:
+        build_analytics_query(AnalyticsForm(level=level))
+
+    assert error.value.errors == {"level": "Choose one of the offered levels."}
+
+
+def test_every_invalid_choice_is_reported_at_once() -> None:
+    with pytest.raises(InvalidAnalyticsError) as error:
+        build_analytics_query(AnalyticsForm(month="x", level="y"))
+
+    assert set(error.value.errors) == {"month", "level"}

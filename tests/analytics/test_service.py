@@ -10,6 +10,7 @@ from vacancy_radar.analytics.service import (
     Analytics,
     JobsWeek,
     SkillCount,
+    SourceSite,
     read_analytics,
 )
 from vacancy_radar.domain.analytics import MIN_SAMPLE, Quartiles
@@ -140,6 +141,18 @@ async def test_jobs_by_week_and_source(async_session: AsyncSession) -> None:
     assert result.jobs_by_source == {
         "djinni": (JobsWeek(week, 1, 0, partial=False, settling=True),),
         "dou": (JobsWeek(week, 2, 2, partial=False, settling=True),),
+    }
+
+
+async def test_names_every_source_with_its_site(async_session: AsyncSession) -> None:
+    await jobs(async_session, 1, source="dou")
+    await jobs(async_session, 1, source="djinni")
+
+    result = await analytics(async_session)
+
+    assert result.sources == {
+        "djinni": SourceSite("Djinni", "https://djinni.co"),
+        "dou": SourceSite("DOU", "https://jobs.dou.ua"),
     }
 
 
