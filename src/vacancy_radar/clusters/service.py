@@ -30,7 +30,7 @@ Matching takes it as the time the job appeared (`notify/matching.py`).
 from collections import defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from itertools import batched
 from typing import Final
 
@@ -40,17 +40,11 @@ from sqlalchemy.orm import Session, load_only
 
 from vacancy_radar.db import locks
 from vacancy_radar.db.models import RawVacancy, Source, Vacancy, VacancyCluster
-from vacancy_radar.domain.dedup import DedupFacts, pick_cluster, shingles
+from vacancy_radar.domain.dedup import CANDIDATE_WINDOW, DedupFacts, pick_cluster, shingles
 from vacancy_radar.domain.salary import Salary
 
 logger = structlog.get_logger("vacancy_radar.clusters")
 
-# How far apart two postings of one job may be first seen. An assumption, not
-# a measurement: the 2026-11-05..09 sample is four days long, and the longest
-# gap in it (91 hours) says more about the sample than about reposts. To be
-# measured again on a longer sample (PLAN.md, findings PR). A posting further
-# from its twin opens a cluster of its own and is sent again as a new job.
-CANDIDATE_WINDOW: Final = timedelta(days=30)
 # New vacancies one run clusters. Bounds a run's transaction, the time it holds
 # the lock, and the facts it keeps in memory (about 30 KB each).
 MAX_PER_RUN: Final = 1000

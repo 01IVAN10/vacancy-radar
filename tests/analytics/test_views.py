@@ -3,7 +3,7 @@
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Table, select
+from sqlalchemy import Engine, Table, inspect, select, text
 from sqlalchemy.orm import Session
 
 from tests.factories import add_clustered_vacancy, add_vacancy
@@ -175,3 +175,25 @@ def test_a_second_refresh_changes_nothing(db_session: Session) -> None:
 def test_empty_views_count_nothing(db_session: Session) -> None:
     assert refresh_views(db_session) == 0
     assert rows(db_session, jobs_weekly) == []
+
+
+def test_every_analytics_view_is_refreshed_with_the_columns_the_code_reads(
+    migrated_engine: Engine,
+) -> None:
+    # A view added by a migration but missing from MATERIALIZED_VIEWS would never be
+    # refreshed, and the page would show the numbers of the day it was created.
+    with migrated_engine.connect() as connection:
+        in_database = set(
+            connection.scalars(
+                text(
+                    "SELECT matviewname FROM pg_matviews "
+                    "WHERE schemaname = current_schema() AND matviewname LIKE 'analytics%'"
+                )
+            )
+        )
+    inspector = inspect(migrated_engine)
+
+    assert in_database == {view.name for view in MATERIALIZED_VIEWS}
+    for view in MATERIALIZED_VIEWS:
+        columns = [column["name"] for column in inspector.get_columns(view.name)]
+        assert columns == [column.name for column in view.c], view.name

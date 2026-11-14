@@ -20,8 +20,8 @@ def test_a_median_of_a_small_sample_is_hidden_but_its_size_is_kept() -> None:
     small = salary_week(MONDAY, MIN_SAMPLE - 1, QUARTILES, COVERAGE)
     enough = salary_week(MONDAY, MIN_SAMPLE, QUARTILES, COVERAGE)
 
-    assert small == SalaryWeek(MONDAY, MIN_SAMPLE - 1, None, partial=False)
-    assert enough == SalaryWeek(MONDAY, MIN_SAMPLE, QUARTILES, partial=False)
+    assert small == SalaryWeek(MONDAY, MIN_SAMPLE - 1, None, partial=False, settling=True)
+    assert enough == SalaryWeek(MONDAY, MIN_SAMPLE, QUARTILES, partial=False, settling=True)
 
 
 @pytest.mark.parametrize(
@@ -50,6 +50,26 @@ def test_week_is_partial(first_day: date, today: date, partial: bool) -> None:
 )
 def test_month_is_partial(month: date, today: date, partial: bool) -> None:
     assert Coverage(date(2026, 11, 5), today).month_is_partial(month) is partial
+
+
+@pytest.mark.parametrize(
+    ("today", "settling"),
+    [
+        (date(2026, 11, 16), True),  # the week is over, but its twins may still join
+        (date(2026, 12, 15), True),  # 29 days after it ended
+        (date(2026, 12, 16), False),  # 30 days after: no posting can join it any more
+    ],
+)
+def test_a_week_settles_a_candidate_window_after_it_ends(today: date, settling: bool) -> None:
+    assert Coverage(date(2026, 11, 5), today).week_is_settling(MONDAY) is settling
+
+
+@pytest.mark.parametrize(
+    ("today", "settling"),
+    [(date(2026, 12, 1), True), (date(2026, 12, 30), True), (date(2026, 12, 31), False)],
+)
+def test_a_month_settles_a_candidate_window_after_it_ends(today: date, settling: bool) -> None:
+    assert Coverage(date(2026, 11, 5), today).month_is_settling(date(2026, 11, 1)) is settling
 
 
 def test_today_is_the_kyiv_day() -> None:

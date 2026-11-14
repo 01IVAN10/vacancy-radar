@@ -25,6 +25,7 @@ hides a vacancy from subscribers, a missed one only sends it twice.
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from hashlib import blake2b
 from typing import Final, Literal, Self
 
@@ -32,6 +33,14 @@ from vacancy_radar.domain.choices import one_of
 from vacancy_radar.domain.salary import Salary
 from vacancy_radar.domain.seniority import LEVELS, Level
 
+# How far apart two postings of one job may be first seen. An assumption, not
+# a measurement: the 2026-11-05..09 sample is four days long, and the longest
+# gap in it (91 hours) says more about the sample than about reposts. To be
+# measured again on a longer sample (PLAN.md, findings PR). A posting further
+# from its twin opens a cluster of its own and is sent again as a new job.
+# Analytics uses it too: a job's facts can change for this long after it
+# first appeared (`domain/analytics.py`).
+CANDIDATE_WINDOW: Final = timedelta(days=30)
 # Share of shingles two descriptions of one job have in common at least. On the
 # 2026-11-09 sample every merge at this level was right; lower levels started
 # to merge different roles of one company (docs/deduplication.md).

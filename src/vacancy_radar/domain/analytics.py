@@ -7,20 +7,29 @@ week had about 190 jobs with a dollar salary in all, but only a dozen or so
 per level, so per-level weeks fall on both sides of the line.
 
 Periods are Kyiv calendar weeks (Monday first) and months of a job's first
-sighting. The first period of the data (collection started on 2026-11-05, a
-Thursday) and the current one are incomplete, and counts in them are lower
-for that reason alone, so `Coverage` marks them.
+sighting. `Coverage` marks two things about a period:
+
+- **partial**: the data miss part of it. The first period (collection
+  started on 2026-11-05, a Thursday) and the current one are partial, and
+  their counts are lower for that reason alone.
+- **settling**: its numbers may still change. A job's other postings can
+  join it up to `CANDIDATE_WINDOW` (30 days) after it first appeared, and
+  bring skills, levels or a salary with them, so the skills, the salaries
+  and the jobs that name a skill of a period settle only that long after
+  it ends. Counts of jobs do not change once a period is over.
 """
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Final, Self
 
+from vacancy_radar.domain.dedup import CANDIDATE_WINDOW
 from vacancy_radar.domain.normalize import kyiv_date
 
 MIN_SAMPLE: Final = 10
-# The series of every level together, and of every source together. Migration
-# 0017 writes the same word into the views.
+# The series of every level together, and of every source together, as
+# migration 0017 writes it into the views. Only `analytics/service.py` uses
+# it; what it returns keeps totals apart from levels and sources.
 ALL: Final = "all"
 
 WEEK: Final = timedelta(days=7)
@@ -49,8 +58,19 @@ class Coverage:
 
     def month_is_partial(self, month: date) -> bool:
         """Whether the data miss part of the month starting on `month`."""
-        next_month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
-        return self.first_day > month or self.today < next_month
+        return self.first_day > month or self.today < _next_month(month)
+
+    def week_is_settling(self, week: date) -> bool:
+        """Whether late postings may still change the week's skills and salaries."""
+        return self.today < week + WEEK + CANDIDATE_WINDOW
+
+    def month_is_settling(self, month: date) -> bool:
+        """Whether late postings may still change the month's skills."""
+        return self.today < _next_month(month) + CANDIDATE_WINDOW
+
+
+def _next_month(month: date) -> date:
+    return (month.replace(day=28) + timedelta(days=4)).replace(day=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +91,7 @@ class SalaryWeek:
     # None when `n` is below `MIN_SAMPLE`.
     quartiles: Quartiles | None
     partial: bool
+    settling: bool
 
 
 def salary_week(week: date, n: int, quartiles: Quartiles, coverage: Coverage) -> SalaryWeek:
@@ -80,6 +101,7 @@ def salary_week(week: date, n: int, quartiles: Quartiles, coverage: Coverage) ->
         n=n,
         quartiles=quartiles if n >= MIN_SAMPLE else None,
         partial=coverage.week_is_partial(week),
+        settling=coverage.week_is_settling(week),
     )
 
 

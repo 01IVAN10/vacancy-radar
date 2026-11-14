@@ -16,7 +16,12 @@ aggregates are built from them:
 - `analytics_job_source`: when the job first appeared on each source. A
   posting can join a cluster weeks after the job first appeared elsewhere,
   and a source's weekly series counts it in the week it appeared there, so
-  past weeks do not change.
+  the job counts of a week that is over do not change.
+
+A late posting still brings its skills, levels and salary to the job, so the
+skill shares and salaries of a past period can change for up to 30 days
+after it ends (`CANDIDATE_WINDOW`); `domain.analytics.Coverage` marks such
+periods as settling.
 
 Days are Kyiv days. `analytics.refresh` rebuilds the views in the order they
 are created here, with `REFRESH ... CONCURRENTLY`, which needs the unique
