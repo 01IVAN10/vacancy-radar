@@ -5,50 +5,56 @@ that can be shared or bookmarked. The form works without JavaScript. With
 HTMX it replaces only the results and pushes the new URL. The page keeps no
 HTMX history snapshot, which would lose the form's state, so going back asks
 for the whole page again (`HX-History-Restore-Request`) and the form is
-rendered from the URL. An invalid form is
-shown again with its errors and status 422.
+rendered from the URL. An invalid form is shown again with its errors and
+status 422. The source filter offers the sources of the `source` table, by
+the same names every result links with.
 """
 
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import HTMLResponse
 
 from vacancy_radar.api.deps import DbSession
-from vacancy_radar.api.labels import FORMAT_LABELS, LEVEL_LABELS, SKILL_GROUPS, SOURCE_LABELS
+from vacancy_radar.api.labels import (
+    FORMAT_LABELS,
+    LEVEL_LABELS,
+    PERIOD_LABELS,
+    SKILL_GROUPS,
+    SORT_LABELS,
+)
 from vacancy_radar.api.templating import templates
-from vacancy_radar.domain.card import details, format_salary, skill_names
+from vacancy_radar.domain.card import details, format_salary, place, skill_names
 from vacancy_radar.domain.normalize import kyiv_date
 from vacancy_radar.domain.search import (
+    EMPTY_FORM,
     MAX_QUERY_LENGTH,
-    PERIOD_DAYS,
     InvalidSearchError,
     SearchForm,
     build_search,
 )
-from vacancy_radar.search.service import JobResult, search_jobs
+from vacancy_radar.search.service import JobResult, search_jobs, source_names
 
 router = APIRouter(tags=["search"])
 
-PERIOD_LABELS = {
-    str(days): "Last 24 hours" if days == 1 else f"Last {days} days" for days in PERIOD_DAYS
-}
-SORT_LABELS = {"relevance": "Most relevant", "newest": "Newest"}
+# The response depends on these request headers, so a cache must tell them apart.
+VARY: Final = "HX-Request, HX-History-Restore-Request"
 
 
 def submitted_search(
-    q: str = "",
+    q: str = EMPTY_FORM.q,
     skills: Annotated[list[str] | None, Query()] = None,
-    skills_match: str = "any",
+    skills_match: str = EMPTY_FORM.skills_match,
     seniority: Annotated[list[str] | None, Query()] = None,
     work_formats: Annotated[list[str] | None, Query()] = None,
-    min_salary_usd: str = "",
-    period: str = "",
+    min_salary_usd: str = EMPTY_FORM.min_salary_usd,
+    period: str = EMPTY_FORM.period,
     sources: Annotated[list[str] | None, Query()] = None,
-    sort: str = "",
-    page: str = "1",
+    sort: str = EMPTY_FORM.sort,
+    page: str = EMPTY_FORM.page,
 ) -> SearchForm:
+    """The form from the query string; a missing parameter takes `SearchForm`'s default."""
     return SearchForm(
         q=q,
         skills=frozenset(skills or ()),
@@ -68,17 +74,20 @@ Submitted = Annotated[SearchForm, Depends(submitted_search)]
 
 @router.get("/vacancies", response_class=HTMLResponse, name="vacancies")
 async def search_page(request: Request, session: DbSession, form: Submitted) -> HTMLResponse:
+    sources = await source_names(session)
     context: dict[str, Any] = {"form": form, "errors": {}, "page": None, "results": []}
     try:
-        query = build_search(form, sources=tuple(SOURCE_LABELS))
+        query = build_search(form, sources=tuple(sources))
     except InvalidSearchError as exc:
         context["errors"] = exc.errors
     else:
         page = await search_jobs(session, query, now=datetime.now(UTC))
+        # Past the last page, "previous" goes to the last one, not to another empty page.
+        previous = min(query.page - 1, page.pages)
         context |= {
             "page": page,
             "results": [_result_view(result) for result in page.results],
-            "previous_url": _page_url(request, query.page - 1) if query.page > 1 else None,
+            "previous_url": _page_url(request, previous) if previous >= 1 else None,
             "next_url": _page_url(request, query.page + 1) if query.page < page.pages else None,
         }
 
@@ -89,17 +98,16 @@ async def search_page(request: Request, session: DbSession, form: Submitted) -> 
     response = templates.TemplateResponse(
         request,
         "search/_results.html" if only_results else "search/page.html",
-        context | _form_context(form),
+        context | _form_context(form, sources),
         status_code=(
             status.HTTP_422_UNPROCESSABLE_CONTENT if context["errors"] else status.HTTP_200_OK
         ),
     )
-    # The same URL answers with a page or a fragment, so caches must tell them apart.
-    response.headers["Vary"] = "HX-Request"
+    response.headers["Vary"] = VARY
     return response
 
 
-def _form_context(form: SearchForm) -> dict[str, Any]:
+def _form_context(form: SearchForm, sources: dict[str, str]) -> dict[str, Any]:
     filters_used = bool(
         form.skills
         or form.seniority
@@ -114,7 +122,7 @@ def _form_context(form: SearchForm) -> dict[str, Any]:
         "skill_groups": SKILL_GROUPS,
         "levels": LEVEL_LABELS,
         "formats": FORMAT_LABELS,
-        "source_labels": SOURCE_LABELS,
+        "source_labels": sources,
         "periods": PERIOD_LABELS,
         "sorts": SORT_LABELS,
     }
@@ -126,7 +134,7 @@ def _result_view(result: JobResult) -> dict[str, Any]:
     seen = kyiv_date(result.first_seen_at)
     return {
         "title": card.title,
-        "place": ", ".join([card.company, *card.cities] if card.company else card.cities),
+        "place": place(card.company, card.cities),
         "salary": format_salary(card),
         "details": " · ".join(details(card)),
         "skills": ", ".join(skill_names(card)),

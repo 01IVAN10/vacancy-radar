@@ -31,7 +31,7 @@ Before parsing, the SQL function `search_text` (migrations 0015 and 0016) fixes 
 
 `search_text` drops an apostrophe (`'`, `’`, `ʼ` or `` ` ``) between two Cyrillic letters, so all three spellings become "обєкт". It runs on the stored texts and on every query, so they find each other, and a query typed without an apostrophe finds them too. Apostrophes elsewhere stay: "Google's" is still found by "google". Cyrillic letters are listed in both cases rather than matched case-insensitively, so the result does not depend on the database's locale.
 
-**Slashes.** The parser reads words joined by a slash ("Python/FastAPI", "Bash/Python", "C/C++") as one token, a file path, so before 0016 a search for "python" missed 25 of the 691 vacancies with the Python skill; 2808 of 4405 descriptions join words this way. `search_text` replaces a slash between two word characters (letters, digits, `+` and `#`) with a space, so each word is found on its own, and "ci/cd" typed in a search still finds "CI/CD". Other slashes stay: turning "</p>" into "< p>" would make the parser read the rest of the text as one unclosed tag and drop every word after it (found by a test). A stored generated column is computed only when its row is written, so 0016 rewrites every row.
+**Slashes.** The parser reads words joined by a slash ("Python/FastAPI", "Bash/Python", "C/C++") as one token, a file path, so before 0016 a search for "python" missed 25 of the 691 vacancies with the Python skill; 2808 of 4405 descriptions join words this way. The SQL function `split_slashes` puts spaces around a slash between two word characters (letters, digits, `+` and `#`): "Python / FastAPI". The parser then reads two words next to each other, so each is found on its own, and the text still reads as written, which lets excerpts be made from it too (below). `search_text` applies it after joining apostrophes. Other slashes stay: turning "</p>" into "< p>" would make the parser read the rest of the text as one unclosed tag and drop every word after it (found by a test). A stored generated column is computed only when its row is written, so 0016 rewrites every row.
 
 ### Queries
 
@@ -43,8 +43,9 @@ Before parsing, the SQL function `search_text` (migrations 0015 and 0016) fixes 
 | `"data engineer"` | these words in this order |
 | `django or golang` | either word |
 | `python -django` | `python`, but not `django` |
+| `ci/cd`, `-c/c++` | a word with a slash is a phrase: "ci" next to "cd"; not "c" next to "c++" |
 
-Any input is valid. Input with no words in it (`!!! (((`, an empty string) matches nothing instead of raising an error.
+A word with a slash becomes a quoted phrase before the query is parsed (`domain/search.py:phrase_slashed_words`). Split into words without quotes, `-c/c++` would exclude "c" and then require "c++", which nothing can satisfy (found in review). Any input is valid. Input with no words in it (`!!! (((`, an empty string) matches nothing instead of raising an error.
 
 ### Known limits
 
@@ -56,7 +57,7 @@ These follow from `simple` and are pinned by tests in `tests/db/test_fts.py`:
 
 ## The search page
 
-`GET /vacancies` (`api/search.py`) takes the search as query parameters, so a search is a link that can be shared. The form works without JavaScript. With HTMX, a change to the form replaces only the results and pushes the new URL. Going back asks the server for the whole page, which renders the form from the URL: the page keeps no HTMX history snapshot (`hx-history="false"`), because a snapshot keeps the markup but not what was ticked or typed, and would show old results under a reset form (found by hand). `search/service.py:search_jobs` does the work; `domain/search.py` checks the form.
+`GET /vacancies` (`api/search.py`) takes the search as query parameters, so a search is a link that can be shared. The form works without JavaScript. With HTMX, a change to the form replaces only the results and pushes the new URL. Going back asks the server for the whole page, which renders the form from the URL: the page keeps no HTMX history snapshot (`hx-history="false"`), because a snapshot keeps the markup but not what was ticked or typed, and would show old results under a reset form (found by hand). The response therefore varies with `HX-Request` and `HX-History-Restore-Request`, and says so in `Vary`. HTMX checks the form before every request, a change of a filter included; `reportValidityOfForms` (`base.html`) makes it show the browser's message for an invalid field instead of dropping the request silently. The server checks the form again. `search/service.py:search_jobs` does the work; `domain/search.py` checks the form.
 
 - **A result is a job, not a posting.** A job is a cluster (`docs/deduplication.md`), so a vacancy posted on Djinni and DOU is one result with a link to each posting ("Open on Djinni · DOU"). A vacancy that has no cluster yet is not shown; `notify.match` clusters new vacancies every few minutes.
 - **Which vacancy shows the job.** A job is found when one of its vacancies has the words and passes every filter. Of those, the best ranked one shows it, then the most complete one: with a salary, then with a company, then the oldest (`clusters/showing.py:fullest_first`, the same order as Telegram messages). So a job filtered by source shows its posting from that source.
@@ -69,11 +70,11 @@ These follow from `simple` and are pinned by tests in `tests/db/test_fts.py`:
 | Seniority, work format | the vacancy states at least one of the chosen ones |
 | Salary from | the top of the monthly dollar range reaches it, as in subscription matching |
 | First seen | the job, not the posting, was first seen within the last 1, 3, 7 or 30 days, so a repost does not make an old job new |
-| Source | the vacancy is from one of the chosen sources |
+| Source | the vacancy is from one of the chosen sources; the filter offers the rows of the `source` table, by the names results link with |
 
 - **Order.** With words, the most relevant first (`ts_rank`, so title words count most), then the newest. Without words, or when asked, the newest job first, by when the job was first seen.
 - **Pages** of 20, up to page 50. Nobody reads 1000 results, and `OFFSET` costs grow with the page.
-- **The excerpt.** With words, `ts_headline` picks one fragment of at most 30 words around them and marks them; without words, the page shows the first 300 characters of the description, cut at a word. It is never the whole description (`CLAUDE.md`, Legal data collection), and every result links to the original with its source's name (condition 3 of DOU's consent, `docs/sources.md`). The markers are control characters, and `domain/search.py:snippet_html` escapes the text before it turns them into `<mark>`, so vacancy text cannot add markup to the page. A word with an apostrophe in the text ("об'єкт") is found but not highlighted, because the excerpt shows the text as written.
+- **The excerpt.** With words, `ts_headline` picks one fragment of at most 30 words around them and marks them; without words, the page shows the first 300 characters of the description, cut at a word. It is never the whole description (`CLAUDE.md`, Legal data collection), and every result links to the original with its source's name (condition 3 of DOU's consent, `docs/sources.md`). The markers are control characters, and `domain/snippet.py:snippet_html` escapes the text before it turns them into `<mark>`, so vacancy text cannot add markup to the page. The fragment is taken from `split_slashes(description)`, as the vector is, so "python" is highlighted in "Python / FastAPI" (the excerpt shows the slash with spaces). A word with an apostrophe in the text ("об'єкт") is found but not highlighted, because the excerpt keeps apostrophes as written.
 - **Links** are shown only when they are `http(s)://`, so a feed could not put a `javascript:` URL on the page.
 
 ## Measurements
@@ -111,7 +112,7 @@ Counts of jobs on the same copy:
 | `python or golang` | 624 | |
 | `"data engineer"` | 50 | |
 | `fastapi` | 51 | the same as the FastAPI skill filter, thanks to the split slashes |
-| `ci/cd` | 433 | the words "ci" and "cd" |
+| `ci/cd` | 426 | the phrase "ci cd" (433 for the two words anywhere) |
 | `golang` | 23 | `go` would also find "go live" and "to go"; the skill filter does not |
 | `node.js` | 129 | |
 | `node` | 15 | a dotted name is one word, so this finds only "node" on its own |

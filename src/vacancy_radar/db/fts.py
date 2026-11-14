@@ -11,8 +11,11 @@ Before parsing, both sides also go through the SQL function `search_text`
 - it drops the apostrophe inside a Ukrainian word: "об'єкт", "об’єкт" and
   "обʼєкт" all become "обєкт", where the parser would split the first two
   into "об" and "єкт";
-- it turns a slash between two words into a space: the parser reads
-  "Python/FastAPI" as one file path, so "python" would not find it.
+- it puts spaces around a slash between two words (`split_slashes`): the
+  parser reads "Python/FastAPI" as one file path, so "python" would not
+  find it. In a query such a word becomes a quoted phrase first
+  (`domain.search.phrase_slashed_words`), so `-c/c++` excludes "c c++"
+  instead of excluding "c" and requiring "c++".
 
 What `simple` cannot do, by design (docs/search.md):
 
@@ -27,7 +30,8 @@ from typing import Any, Final
 from sqlalchemy import ColumnElement, ColumnExpressionArgument, Float, Text, cast, func
 from sqlalchemy.dialects.postgresql import REGCONFIG, TSQUERY
 
-from vacancy_radar.domain.search import HIGHLIGHT_START, HIGHLIGHT_STOP
+from vacancy_radar.domain.search import phrase_slashed_words
+from vacancy_radar.domain.snippet import HIGHLIGHT_START, HIGHLIGHT_STOP
 
 SEARCH_CONFIG: Final = "simple_unaccent"
 # One fragment of at most 30 words around the best match: a short excerpt,
@@ -41,11 +45,14 @@ def text_query(text: str) -> ColumnElement[Any]:
     """The tsquery of what a person typed, in web search syntax.
 
     Words must all appear, `"quoted words"` must appear in that order, `or`
-    allows either side, and `-word` excludes a word. Any input is valid: a
-    query with no words in it matches nothing instead of failing.
+    allows either side, and `-word` excludes a word; a word with a slash is a
+    phrase (`-c/c++` excludes "c c++"). Any input is valid: a query with no
+    words in it matches nothing instead of failing.
     """
     return func.websearch_to_tsquery(
-        cast(SEARCH_CONFIG, REGCONFIG), func.search_text(text), type_=TSQUERY
+        cast(SEARCH_CONFIG, REGCONFIG),
+        func.search_text(phrase_slashed_words(text)),
+        type_=TSQUERY,
     )
 
 
@@ -61,11 +68,17 @@ def headline(
 ) -> ColumnElement[str]:
     """A short fragment of `text` around the query's words, which are wrapped in markers.
 
-    `domain.search.snippet_html` turns the markers into `<mark>`. A word with
-    an apostrophe in the text ("об'єкт") is not highlighted, because the text
-    is shown as written while the query has no apostrophes. Without a match
-    in `text`, the fragment is its beginning.
+    `domain.snippet.snippet_html` turns the markers into `<mark>`. The text
+    goes through `split_slashes`, as the stored vector does, so "python" is
+    highlighted in "Python/FastAPI"; the excerpt then shows "Python /
+    FastAPI". Apostrophes are kept as written, so a word with one
+    ("об'єкт") is found but not highlighted. Without a match in `text`, the
+    fragment is its beginning.
     """
     return func.ts_headline(
-        cast(SEARCH_CONFIG, REGCONFIG), text, query, HEADLINE_OPTIONS, type_=Text
+        cast(SEARCH_CONFIG, REGCONFIG),
+        func.split_slashes(text),
+        query,
+        HEADLINE_OPTIONS,
+        type_=Text,
     )

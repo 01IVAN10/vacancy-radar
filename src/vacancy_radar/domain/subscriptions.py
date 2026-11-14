@@ -16,20 +16,23 @@ Matching a vacancy against the filter lives in `domain/matching.py`.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, Self
+from typing import Final, Self
 
-from vacancy_radar.domain.choices import known_values, monthly_usd, one_of
+from vacancy_radar.domain.choices import (
+    SKILLS_MATCHES,
+    FormError,
+    SkillsMatch,
+    known_skills,
+    known_values,
+    monthly_usd,
+    one_of,
+    skills_match,
+)
 from vacancy_radar.domain.seniority import LEVELS, Level
-from vacancy_radar.domain.skills import SKILLS, SKILLS_BY_SLUG
 from vacancy_radar.domain.work_format import WORK_FORMATS, WorkFormat
 
-SkillsMatch = Literal["any", "all"]
-SKILLS_MATCHES: Final[tuple[SkillsMatch, ...]] = ("any", "all")
-
 MAX_NAME_LENGTH: Final = 80
-MAX_SKILLS: Final = 20
 # Position of each skill in the dictionary, so skills are stored in its order.
-_SKILL_ORDER: Final = {skill.slug: position for position, skill in enumerate(SKILLS)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,17 +129,11 @@ class SubscriptionForm:
         )
 
 
-class InvalidSubscriptionError(Exception):
-    """The form cannot become a subscription. `errors` maps a field to its message.
+class InvalidSubscriptionError(FormError):
+    """The form cannot become a subscription.
 
     The key `filter` holds an error about the criteria as a whole.
     """
-
-    def __init__(self, errors: dict[str, str]) -> None:
-        if not errors:
-            raise ValueError("an InvalidSubscriptionError needs at least one field error")
-        self.errors = errors
-        super().__init__("; ".join(f"{field}: {message}" for field, message in errors.items()))
 
 
 def build_subscription(form: SubscriptionForm) -> SubscriptionDraft:
@@ -153,15 +150,8 @@ def build_subscription(form: SubscriptionForm) -> SubscriptionDraft:
     elif len(name) > MAX_NAME_LENGTH:
         errors["name"] = f"Use at most {MAX_NAME_LENGTH} characters."
 
-    unknown_skills = sorted(form.skills - SKILLS_BY_SLUG.keys())
-    skills = tuple(sorted(form.skills & SKILLS_BY_SLUG.keys(), key=_SKILL_ORDER.__getitem__))
-    if unknown_skills:
-        errors["skills"] = f"Unknown skills: {', '.join(unknown_skills)}."
-    elif len(skills) > MAX_SKILLS:
-        errors["skills"] = f"Choose at most {MAX_SKILLS} skills."
-
-    if form.skills_match not in SKILLS_MATCHES:
-        errors["skills_match"] = "Choose whether any or all of the skills must match."
+    skills = known_skills(form.skills, errors)
+    match = skills_match(form.skills_match, skills, errors)
     levels = known_values(form.seniority, LEVELS, "seniority", errors)
     formats = known_values(form.work_formats, WORK_FORMATS, "work_formats", errors)
     amount = monthly_usd(form.min_salary_usd, "min_salary_usd", errors)
@@ -175,7 +165,7 @@ def build_subscription(form: SubscriptionForm) -> SubscriptionDraft:
         name=name,
         filter=SubscriptionFilter(
             skills=skills,
-            skills_match=one_of(form.skills_match, SKILLS_MATCHES) if len(skills) > 1 else "any",
+            skills_match=match,
             seniority=levels,
             work_formats=formats,
             salary=None if amount is None else SalaryFloor(amount, form.include_unsalaried),

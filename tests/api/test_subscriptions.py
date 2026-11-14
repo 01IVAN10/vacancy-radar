@@ -181,7 +181,7 @@ async def test_invalid_form_is_shown_again_with_errors(
 async def test_the_browser_checks_the_form_before_sending(client: AsyncClient, owner: User) -> None:
     response = await client.get("/subscriptions/new")
 
-    assert 'pattern="[0-9][0-9, ]*"' in response.text
+    assert 'pattern=" *[0-9][0-9, ]*"' in response.text
     assert " novalidate" not in response.text
 
 

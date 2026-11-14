@@ -37,13 +37,8 @@ from vacancy_radar.clusters.showing import card_of, fullest_first
 from vacancy_radar.db.fts import headline, rank, text_query
 from vacancy_radar.db.models import Source, Vacancy, VacancyCluster
 from vacancy_radar.domain.card import VacancyCard
-from vacancy_radar.domain.search import (
-    MAX_PAGE,
-    PAGE_SIZE,
-    SearchQuery,
-    excerpt,
-    snippet_html,
-)
+from vacancy_radar.domain.search import MAX_PAGE, PAGE_SIZE, SearchQuery
+from vacancy_radar.domain.snippet import excerpt, snippet_html
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,3 +184,9 @@ async def _postings(
     ):
         found[cluster_id].append(Posting(source_name, url))
     return {cluster_id: tuple(postings) for cluster_id, postings in found.items()}
+
+
+async def source_names(session: AsyncSession) -> dict[str, str]:
+    """Every source's name by its slug, in slug order: what the source filter offers."""
+    rows = await session.execute(select(Source.slug, Source.name).order_by(Source.slug))
+    return dict(rows.all())

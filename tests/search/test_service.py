@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tests.factories import NOW, add_clustered_vacancy, add_vacancy
 from vacancy_radar.db.models import Vacancy
 from vacancy_radar.domain.search import MAX_PAGE, PAGE_SIZE, SearchQuery
-from vacancy_radar.search.service import Posting, SearchPage, search_jobs
+from vacancy_radar.search.service import Posting, SearchPage, search_jobs, source_names
 
 pytestmark = pytest.mark.anyio
 
@@ -200,6 +200,23 @@ async def test_snippet_highlights_the_words(async_session: AsyncSession) -> None
     assert result.snippet_html == (
         "We use <mark>Kotlin</mark> &amp; &quot;Ktor&quot; for &lt;3 years"
     )
+
+
+async def test_snippet_highlights_words_joined_by_a_slash(async_session: AsyncSession) -> None:
+    await job(async_session, description="We use Python/FastAPI and CI/CD")
+
+    [result] = (await search(async_session, text="python ci/cd")).results
+
+    assert result.snippet_html == (
+        "We use <mark>Python</mark> / FastAPI and <mark>CI</mark> / <mark>CD</mark>"
+    )
+
+
+async def test_sources_are_named_by_the_source_table(async_session: AsyncSession) -> None:
+    await job(async_session, source="dou")
+    await job(async_session, source="djinni")
+
+    assert await source_names(async_session) == {"djinni": "Djinni", "dou": "DOU"}
 
 
 async def test_without_words_the_snippet_is_the_start_of_the_description(

@@ -81,7 +81,7 @@ async def test_htmx_gets_only_the_results(client: AsyncClient, async_session: As
     assert response.status_code == 200
     assert "<html" not in response.text
     assert "Go Developer" in response.text
-    assert response.headers["Vary"] == "HX-Request"
+    assert response.headers["Vary"] == "HX-Request, HX-History-Restore-Request"
 
 
 async def test_going_back_loads_the_whole_page_with_its_form(client: AsyncClient) -> None:
@@ -170,14 +170,39 @@ async def test_says_when_nothing_is_found(client: AsyncClient) -> None:
     assert "No jobs found." in response.text
 
 
-async def test_a_page_past_the_last_says_so(
+async def test_a_page_past_the_last_says_so_and_goes_back_to_the_last(
     client: AsyncClient, async_session: AsyncSession
 ) -> None:
     await job(async_session)
 
-    response = await client.get("/vacancies", params={"page": "3"})
+    response = await client.get("/vacancies", params={"page": "50"})
 
     assert "There are no more results." in response.text
+    assert 'href="/vacancies?page=1"' in response.text
+    assert "page=49" not in response.text
+
+
+async def test_nothing_found_offers_no_pages(client: AsyncClient) -> None:
+    response = await client.get("/vacancies", params={"q": "cobol", "page": "3"})
+
+    assert "← Previous" not in response.text
+    assert "Next →" not in response.text
+
+
+async def test_the_source_filter_offers_the_stored_sources(
+    client: AsyncClient, async_session: AsyncSession
+) -> None:
+    empty = await client.get("/vacancies")
+    await job(async_session, source="dou")
+
+    offered = await client.get("/vacancies")
+    unknown = await client.get("/vacancies", params={"sources": "djinni"})
+
+    assert "<legend>Source</legend>" not in empty.text
+    assert 'name="sources" value="dou"' in offered.text
+    assert 'name="sources" value="djinni"' not in offered.text
+    assert unknown.status_code == 422
+    assert "Unknown values: djinni." in unknown.text
 
 
 async def test_filters_open_when_used(client: AsyncClient) -> None:
@@ -200,5 +225,13 @@ async def test_the_salary_field_takes_only_digits_before_sending(client: AsyncCl
     response = await client.get("/vacancies")
 
     assert 'name="min_salary_usd"' in response.text
-    assert 'pattern="[0-9][0-9, ]*"' in response.text
+    assert 'pattern=" *[0-9][0-9, ]*"' in response.text
     assert " novalidate" not in response.text
+    # HTMX checks the form before each request; without this it would drop it silently.
+    assert '"reportValidityOfForms": true' in response.text
+
+
+async def test_spaces_around_the_salary_are_accepted(client: AsyncClient) -> None:
+    response = await client.get("/vacancies", params={"min_salary_usd": " 3 000 "})
+
+    assert response.status_code == 200

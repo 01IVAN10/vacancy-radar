@@ -34,11 +34,11 @@ def found(session: Session, query: str) -> list[str]:
         ("Google's", "Google's"),
         ("'quoted'", "'quoted'"),
         ("Київ'", "Київ'"),
-        # A slash between words becomes a space: the parser reads "a/b" as a file path.
-        ("Python/FastAPI", "Python FastAPI"),
-        ("пʼять/шість", "пять шість"),
-        ("C++/C#/.NET", "C++ C# .NET"),
-        ("24/7", "24 7"),
+        # A slash between words gets spaces: the parser reads "a/b" as a file path.
+        ("Python/FastAPI", "Python / FastAPI"),
+        ("пʼять/шість", "пять / шість"),
+        ("C++/C#/.NET", "C++ / C# / .NET"),
+        ("24/7", "24 / 7"),
         # Other slashes stay, or "</p>" would become an unclosed tag.
         ("</p> a / b /path", "</p> a / b /path"),
     ],
@@ -85,8 +85,26 @@ def test_english_possessive_is_found_by_its_word(db_session: Session) -> None:
 def test_words_joined_by_a_slash_are_found_one_by_one(db_session: Session) -> None:
     add_vacancy(db_session, title="Backend", description="Python/FastAPI, C/C++, CI/CD")
 
-    for typed in ["python", "fastapi", "ci/cd", '"python/fastapi"', "cd"]:
+    for typed in ["python", "fastapi", "ci/cd", '"python/fastapi"', "cd", "c/c++"]:
         assert found(db_session, typed) == ["Backend"], typed
+
+
+def test_excluding_a_word_with_a_slash_excludes_the_phrase(db_session: Session) -> None:
+    add_vacancy(db_session, title="Python", description="Python/FastAPI, CI/CD")
+    add_vacancy(db_session, title="Python and C", description="Python, C/C++, CI/CD")
+    add_vacancy(db_session, title="Python without pipelines", description="Python, Django")
+
+    assert sorted(found(db_session, "python -c/c++")) == ["Python", "Python without pipelines"]
+    # Exclusions alone find everything else, as `-python` does.
+    assert found(db_session, "-ci/cd") == ["Python without pipelines"]
+    assert found(db_session, "python -ci/cd") == ["Python without pipelines"]
+
+
+def test_a_word_with_a_slash_is_found_as_a_phrase(db_session: Session) -> None:
+    add_vacancy(db_session, title="Pipelines", description="We build CI/CD")
+    add_vacancy(db_session, title="Apart", description="CI tools, and a CD player")
+
+    assert found(db_session, "ci/cd") == ["Pipelines"]
 
 
 def test_markup_left_in_a_description_hides_no_words(db_session: Session) -> None:

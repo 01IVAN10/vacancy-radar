@@ -3,10 +3,11 @@ from dataclasses import replace
 
 import pytest
 
+from vacancy_radar.domain.choices import SkillsMatch
 from vacancy_radar.domain.matching import VacancyFacts, matches
 from vacancy_radar.domain.money import UsdRange
 from vacancy_radar.domain.seniority import Level
-from vacancy_radar.domain.subscriptions import SalaryFloor, SkillsMatch, SubscriptionFilter
+from vacancy_radar.domain.subscriptions import SalaryFloor, SubscriptionFilter
 from vacancy_radar.domain.work_format import WorkFormat
 
 

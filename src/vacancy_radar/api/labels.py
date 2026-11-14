@@ -2,10 +2,10 @@
 
 from typing import Final
 
+from vacancy_radar.domain.search import PERIOD_DAYS, Sort
 from vacancy_radar.domain.seniority import LEVELS
 from vacancy_radar.domain.skills import SKILLS, Category
 from vacancy_radar.domain.work_format import WORK_FORMATS
-from vacancy_radar.sources import ADAPTERS
 
 CATEGORY_LABELS: Final[dict[Category, str]] = {
     "language": "Languages",
@@ -28,5 +28,7 @@ SKILL_GROUPS: Final = [
     (label, [skill for skill in SKILLS if skill.category == category])
     for category, label in CATEGORY_LABELS.items()
 ]
-# Sources by slug, as their adapters name them.
-SOURCE_LABELS: Final = {slug: adapter.name for slug, adapter in ADAPTERS.items()}
+PERIOD_LABELS: Final = {
+    str(days): "Last 24 hours" if days == 1 else f"Last {days} days" for days in PERIOD_DAYS
+}
+SORT_LABELS: Final[dict[Sort, str]] = {"relevance": "Most relevant", "newest": "Newest"}

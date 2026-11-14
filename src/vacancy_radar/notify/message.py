@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from html import escape
 from typing import Final
 
-from vacancy_radar.domain.card import VacancyCard, details, format_salary, skill_names
+from vacancy_radar.domain.card import VacancyCard, details, format_salary, place, skill_names
 
 # Telegram's limit on a message's text, in UTF-16 code units after entities
 # are parsed. Counting the HTML instead is stricter, so a message within it
@@ -31,10 +31,9 @@ def render_message(card: VacancyCard, subscription_names: Sequence[str], *, site
     """
     lines = [f"<b>{escape(_shorten(card.title, MAX_TITLE_LENGTH))}</b>"]
     company = _shorten(card.company, MAX_COMPANY_LENGTH) if card.company else None
-    cities = list(card.cities[:MAX_CITIES])
-    place = ", ".join([company, *cities] if company else cities)
-    if place:
-        lines.append(escape(place))
+    where = place(company, card.cities[:MAX_CITIES])
+    if where:
+        lines.append(escape(where))
     salary = format_salary(card)
     if salary:
         lines.append(f"💰 {escape(salary)}")

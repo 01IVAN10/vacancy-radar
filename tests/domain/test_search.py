@@ -2,11 +2,9 @@ from typing import Any
 
 import pytest
 
-from vacancy_radar.domain.choices import MAX_MIN_SALARY_USD
+from vacancy_radar.domain.choices import MAX_MIN_SALARY_USD, MAX_SKILLS, FormError
 from vacancy_radar.domain.search import (
-    EXCERPT_LENGTH,
-    HIGHLIGHT_START,
-    HIGHLIGHT_STOP,
+    EMPTY_FORM,
     MAX_PAGE,
     MAX_QUERY_LENGTH,
     PAGE_SIZE,
@@ -14,11 +12,9 @@ from vacancy_radar.domain.search import (
     SearchForm,
     SearchQuery,
     build_search,
-    excerpt,
-    snippet_html,
+    phrase_slashed_words,
 )
 from vacancy_radar.domain.skills import SKILLS
-from vacancy_radar.domain.subscriptions import MAX_SKILLS
 
 SOURCES = ("djinni", "dou")
 
@@ -34,7 +30,7 @@ def errors_of(**fields: Any) -> dict[str, str]:
 
 
 def test_an_empty_form_lists_the_newest_jobs() -> None:
-    assert build() == SearchQuery(sort="newest", page=1)
+    assert build() == SearchQuery()
 
 
 def test_a_full_form_in_canonical_form() -> None:
@@ -123,47 +119,52 @@ def test_an_empty_page_is_the_first() -> None:
 
 
 def test_an_error_needs_a_field() -> None:
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ValueError, match="InvalidSearchError needs at least one field error"):
         InvalidSearchError({})
 
 
-def mark(text: str) -> str:
-    return f"{HIGHLIGHT_START}{text}{HIGHLIGHT_STOP}"
+def test_search_errors_are_form_errors() -> None:
+    error = InvalidSearchError({"page": "Pages go from 1 to 50."})
+
+    assert isinstance(error, FormError)
+    assert str(error) == "page: Pages go from 1 to 50."
 
 
-def test_snippet_marks_the_highlighted_words() -> None:
-    assert snippet_html(f"Know {mark('Python')} and {mark('SQL')}") == (
-        "Know <mark>Python</mark> and <mark>SQL</mark>"
-    )
+def test_the_empty_form_is_the_empty_search() -> None:
+    assert build_search(EMPTY_FORM, sources=SOURCES) == SearchQuery()
 
 
-def test_snippet_escapes_the_text_and_its_highlights() -> None:
-    text = f"<script>alert(1)</script> & {mark('<b>Go</b>')}"
-
-    assert snippet_html(text) == (
-        "&lt;script&gt;alert(1)&lt;/script&gt; &amp; <mark>&lt;b&gt;Go&lt;/b&gt;</mark>"
-    )
-
-
-def test_snippet_drops_markers_without_a_pair() -> None:
-    assert snippet_html(f"a{HIGHLIGHT_START}b {mark('c')} d{HIGHLIGHT_STOP}") == (
-        "ab <mark>c</mark> d"
-    )
-
-
-def test_excerpt_keeps_a_short_text_whole() -> None:
-    assert excerpt("Short text.") == "Short text."
+@pytest.mark.parametrize(
+    ("q", "sort", "expected"),
+    [
+        ("", "", "newest"),
+        ("", "relevance", "newest"),
+        ("", "newest", "newest"),
+        ("python", "", "relevance"),
+        ("python", "relevance", "relevance"),
+        ("python", "newest", "newest"),
+    ],
+)
+def test_sort(q: str, sort: str, expected: str) -> None:
+    assert build(q=q, sort=sort).sort == expected
 
 
-def test_excerpt_cuts_a_long_text_at_a_word() -> None:
-    text = "word, " * 100
-
-    cut = excerpt(text)
-
-    assert len(cut) <= EXCERPT_LENGTH
-    assert cut.endswith("word…")
-    assert text.startswith(cut.removesuffix("…"))
-
-
-def test_excerpt_cuts_one_endless_word() -> None:
-    assert excerpt("x" * 50, limit=10) == "x" * 9 + "…"
+@pytest.mark.parametrize(
+    ("typed", "sent"),
+    [
+        ("python", "python"),
+        ("ci/cd", '"ci/cd"'),
+        ("python -c/c++", 'python -"c/c++"'),
+        ("-ci/cd or go", '-"ci/cd" or go'),
+        ("Python/FastAPI django", '"Python/FastAPI" django'),
+        # Already a phrase, or inside an unclosed quote: left alone.
+        ('"python/django" sql', '"python/django" sql'),
+        ('sql "a b/c', 'sql "a b/c'),
+        # Not between two words.
+        ("a / b", "a / b"),
+        ("/path", "/path"),
+        ("24/7", '"24/7"'),
+    ],
+)
+def test_a_word_with_a_slash_becomes_a_phrase(typed: str, sent: str) -> None:
+    assert phrase_slashed_words(typed) == sent

@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from vacancy_radar.domain.card import VacancyCard, details, format_salary, skill_names
+from vacancy_radar.domain.card import VacancyCard, details, format_salary, place, skill_names
 
 CARD = VacancyCard(
     title="Senior Python Developer",
@@ -56,3 +56,18 @@ def test_details_are_levels_then_formats() -> None:
 
 def test_skill_names_leave_out_skills_no_longer_in_the_dictionary() -> None:
     assert skill_names(CARD) == ["Python", "Django"]
+
+
+@pytest.mark.parametrize(
+    ("company", "cities", "shown"),
+    [
+        ("Acme", ["Kyiv", "Lviv"], "Acme, Kyiv, Lviv"),
+        (None, ["Kyiv"], "Kyiv"),
+        ("Acme", [], "Acme"),
+        (None, [], ""),
+    ],
+)
+def test_place_is_the_company_then_the_cities(
+    company: str | None, cities: list[str], shown: str
+) -> None:
+    assert place(company, cities) == shown

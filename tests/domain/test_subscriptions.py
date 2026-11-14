@@ -3,11 +3,10 @@ from typing import Any
 
 import pytest
 
-from vacancy_radar.domain.choices import MAX_MIN_SALARY_USD
+from vacancy_radar.domain.choices import MAX_MIN_SALARY_USD, MAX_SKILLS
 from vacancy_radar.domain.skills import SKILLS
 from vacancy_radar.domain.subscriptions import (
     MAX_NAME_LENGTH,
-    MAX_SKILLS,
     InvalidSubscriptionError,
     SalaryFloor,
     SubscriptionDraft,

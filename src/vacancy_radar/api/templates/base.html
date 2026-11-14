@@ -3,9 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  {# HTMX swaps 2xx responses only; 422 carries a form's errors, so it is swapped too. #}
+  {# HTMX swaps 2xx responses only; 422 carries a form's errors, so it is swapped too.
+     HTMX checks a form before every request it sends, a `change` included, and by default
+     drops an invalid one silently; `reportValidityOfForms` shows the browser's message. #}
   <meta name="htmx-config"
-        content='{"responseHandling": [{"code": "204", "swap": false}, {"code": "[23]..", "swap": true}, {"code": "422", "swap": true}, {"code": "[45]..", "swap": false, "error": true}]}'>
+        content='{"reportValidityOfForms": true, "responseHandling": [{"code": "204", "swap": false}, {"code": "[23]..", "swap": true}, {"code": "422", "swap": true}, {"code": "[45]..", "swap": false, "error": true}]}'>
   <title>{% block title %}Vacancy Radar{% endblock %}</title>
   <link rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css"

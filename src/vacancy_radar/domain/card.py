@@ -53,6 +53,11 @@ def format_salary(card: VacancyCard) -> str | None:
     return f"{amount} {PERIODS.get(card.salary_period, card.salary_period)}"
 
 
+def place(company: str | None, cities: Sequence[str]) -> str:
+    """Where the job is: "Acme, Kyiv, Lviv", or only the cities, or only the company."""
+    return ", ".join([company, *cities] if company else cities)
+
+
 def details(card: VacancyCard) -> list[str]:
     """Its levels, then its work formats, as words: ["Senior", "Remote"]."""
     return [level.capitalize() for level in card.seniority] + [

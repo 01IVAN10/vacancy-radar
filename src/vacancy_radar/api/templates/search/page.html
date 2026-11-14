@@ -53,10 +53,12 @@
       <legend>Work format</legend>
       {{ checkboxes("work_formats", formats, form.work_formats) }}
     </fieldset>
-    <fieldset>
-      <legend>Source</legend>
-      {{ checkboxes("sources", source_labels, form.sources) }}
-    </fieldset>
+    {% if source_labels %}
+      <fieldset>
+        <legend>Source</legend>
+        {{ checkboxes("sources", source_labels, form.sources) }}
+      </fieldset>
+    {% endif %}
     <fieldset>
       <legend>Skills</legend>
       {{ skill_picker(skill_groups, form.skills) }}
