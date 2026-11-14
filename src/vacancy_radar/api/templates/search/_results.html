@@ -8,7 +8,7 @@
   <p>No jobs found. Try fewer words or filters.</p>
 {% else %}
   <p><small>
-    {{ "{:,}".format(page.total) }} {{ "job" if page.total == 1 else "jobs" }} found
+    {{ page.total | thousands }} {{ "job" if page.total == 1 else "jobs" }} found
     {%- if page.pages > 1 %}, page {{ page.query.page }} of {{ page.pages }}{% endif %}
   </small></p>
   {% for result in results %}{% include "search/_card.html" %}{% endfor %}

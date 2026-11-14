@@ -10,13 +10,12 @@ status 422. The source filter offers the sources of the `source` table, by
 the same names every result links with.
 """
 
-from datetime import UTC, datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import HTMLResponse
 
-from vacancy_radar.api.deps import DbSession
+from vacancy_radar.api.deps import DbSession, Now
 from vacancy_radar.api.labels import (
     FORMAT_LABELS,
     LEVEL_LABELS,
@@ -24,7 +23,8 @@ from vacancy_radar.api.labels import (
     SKILL_GROUPS,
     SORT_LABELS,
 )
-from vacancy_radar.api.templating import templates
+from vacancy_radar.api.templating import day_label, templates
+from vacancy_radar.db.sources import source_sites
 from vacancy_radar.domain.card import details, format_salary, place, skill_names
 from vacancy_radar.domain.normalize import kyiv_date
 from vacancy_radar.domain.search import (
@@ -34,7 +34,7 @@ from vacancy_radar.domain.search import (
     SearchForm,
     build_search,
 )
-from vacancy_radar.search.service import JobResult, search_jobs, source_names
+from vacancy_radar.search.service import JobResult, search_jobs
 
 router = APIRouter(tags=["search"])
 
@@ -73,15 +73,17 @@ Submitted = Annotated[SearchForm, Depends(submitted_search)]
 
 
 @router.get("/vacancies", response_class=HTMLResponse, name="vacancies")
-async def search_page(request: Request, session: DbSession, form: Submitted) -> HTMLResponse:
-    sources = await source_names(session)
+async def search_page(
+    request: Request, session: DbSession, now: Now, form: Submitted
+) -> HTMLResponse:
+    sources = {slug: site.name for slug, site in (await source_sites(session)).items()}
     context: dict[str, Any] = {"form": form, "errors": {}, "page": None, "results": []}
     try:
         query = build_search(form, sources=tuple(sources))
     except InvalidSearchError as exc:
         context["errors"] = exc.errors
     else:
-        page = await search_jobs(session, query, now=datetime.now(UTC))
+        page = await search_jobs(session, query, now=now)
         # Past the last page, "previous" goes to the last one, not to another empty page.
         previous = min(query.page - 1, page.pages)
         context |= {
@@ -139,7 +141,7 @@ def _result_view(result: JobResult) -> dict[str, Any]:
         "details": " · ".join(details(card)),
         "skills": ", ".join(skill_names(card)),
         "snippet_html": result.snippet_html,
-        "first_seen": f"{seen.day} {seen:%b %Y}",
+        "first_seen": day_label(seen),
         # Only web links: a feed must not be able to put a `javascript:` URL on the page.
         "postings": [
             posting

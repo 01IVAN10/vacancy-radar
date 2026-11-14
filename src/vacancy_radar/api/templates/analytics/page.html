@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Analytics · Vacancy Radar{% endblock %}
+{% block scripts %}
+  {% if data %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.min.js"
+            integrity="sha384-Emf5ZVIUiarAdhkgtqK+5/Z5qIvM6QoVrS+qAVtfyZVuD5lIHrac0me485+Antp0"
+            crossorigin="anonymous" defer></script>
+    <script src="{{ url_for('static', path='analytics.js').path }}" defer></script>
+  {% endif %}
+{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>Analytics</h1>
+  <p>The IT job market as seen by Vacancy Radar. A job posted on several sites counts once.</p>
+</hgroup>
+
+{% if errors %}
+  <div role="alert">
+    <p><mark>These choices cannot be shown.</mark></p>
+    <ul>{% for message in errors.values() %}<li>{{ message }}</li>{% endfor %}</ul>
+    <p><a href="{{ url_for('analytics').path }}">Show the latest analytics</a></p>
+  </div>
+{% elif not data %}
+  <p>No jobs are counted yet. The numbers appear after the next refresh.</p>
+{% else %}
+  {% set summary = data.summary %}
+  <section aria-label="What the numbers cover">
+    <p>
+      <strong>{{ summary.jobs | thousands }}</strong> jobs
+      ({{ summary.postings | thousands }} postings) since {{ summary.first_day | day }};
+      {{ summary.with_skills | thousands }} of them name a known skill, and only those count
+      in skills and salaries.
+      {{ salary_share }}% of these state a monthly salary in dollars
+      (n = {{ summary.with_salary | thousands }}).
+    </p>
+    <p><small>
+      Updated {{ refreshed }}.
+      Sources:
+      {% for site in sources.values() -%}
+        <a href="{{ site.url }}" rel="noopener">{{ site.name }}</a>{% if not loop.last %}, {% endif %}
+      {%- endfor %}.
+      An asterisk (*) marks a week or month the data cover only in part: collection started
+      on {{ summary.first_day | day }}, and the current period is not over.
+    </small></p>
+  </section>
+
+  <form method="get" action="{{ url_for('analytics').path }}">
+    <div class="grid">
+      {% if month_options %}
+        <label>
+          Month of top skills
+          <select name="month">
+            {% for value, label in month_options.items() %}
+              <option value="{{ value }}" {% if value == chosen_month %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      {% endif %}
+      <label>
+        Level of salaries
+        <select name="level">
+          <option value="">Every level</option>
+          {% for value, label in levels.items() %}
+            <option value="{{ value }}" {% if data.level == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <button type="submit" class="secondary">Show</button>
+  </form>
+
+  {# The charts' numbers; `tojson` escapes <, > and &, so no value can close the script. #}
+  <script type="application/json" id="analytics-data">{{ chart_data | tojson }}</script>
+
+  <figure>
+    {% set top = data.top_skills %}
+    {% if not data.month %}
+      <h2>Top skills</h2>
+      <p>No job names a known skill yet.</p>
+    {% else %}
+      <h2 id="skills-title">Top skills, {{ month_heading(data.month, top.partial if top else false) }}</h2>
+      {% if not top %}
+        <p>No jobs with skills were first seen in {{ data.month | month }}.</p>
+      {% else %}
+        <div class="chart"><canvas id="skills-chart" aria-labelledby="skills-title" role="img"></canvas></div>
+        <figcaption>
+          Share of the {{ top.jobs | thousands }} jobs that name a skill and were first seen that month.
+          {% if top.settling %}Not final: postings that join a job later may still add skills.{% endif %}
+        </figcaption>
+        <table class="striped">
+          <thead>
+            <tr><th scope="col">Skill</th><th scope="col" class="number">Jobs</th><th scope="col" class="number">Share</th></tr>
+          </thead>
+          <tbody>
+            {% for skill in top.skills %}
+              <tr>
+                <th scope="row">{{ skill.name }}</th>
+                <td class="number">{{ skill.n | thousands }} of {{ top.jobs | thousands }}</td>
+                <td class="number">{{ skill.share }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    {% endif %}
+  </figure>
+
+  <figure>
+    <h2 id="salaries-title">Salaries by week, {{ level_label }}</h2>
+    {% if not data.salaries %}
+      <p>No jobs of this level state a monthly salary in dollars yet.</p>
+    {% else %}
+      <div class="chart"><canvas id="salaries-chart" aria-labelledby="salaries-title" role="img"></canvas></div>
+      <figcaption>
+        Monthly salary in US dollars of the jobs first seen each week: the median, and the middle half
+        from the 25th to the 75th percentile. A week with fewer than {{ min_sample }} salaries shows
+        only how many there are. Jobs that state a salary are few and are not a random sample of the market.
+        {% if salaries_settle_from %}Weeks from {{ salaries_settle_from }} on are not final: postings that join a job later may still bring a salary or a level.{% endif %}
+      </figcaption>
+      <table class="striped">
+        <thead>
+          <tr>
+            <th scope="col">Week of</th>
+            <th scope="col" class="number">n</th>
+            <th scope="col" class="number">25th percentile</th>
+            <th scope="col" class="number">Median</th>
+            <th scope="col" class="number">75th percentile</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for week in data.salaries %}
+            <tr>
+              <th scope="row">{{ week_label(week.week, week.partial) }}</th>
+              <td class="number">{{ week.n | thousands }}</td>
+              {% if week.quartiles %}
+                <td class="number">${{ week.quartiles.p25 | thousands }}</td>
+                <td class="number">${{ week.quartiles.median | thousands }}</td>
+                <td class="number">${{ week.quartiles.p75 | thousands }}</td>
+              {% else %}
+                <td colspan="3"><small>hidden: fewer than {{ min_sample }} salaries</small></td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </figure>
+
+  <figure>
+    <h2 id="jobs-title">New jobs by week</h2>
+    <div class="chart"><canvas id="jobs-chart" aria-labelledby="jobs-title" role="img"></canvas></div>
+    <figcaption>
+      Jobs first seen each week. A job posted on two sites counts on each of them and once in all,
+      so the sources add up to more than all.
+      {% if jobs_settle_from %}From the week of {{ jobs_settle_from }} on, the jobs that name a skill are not final.{% endif %}
+    </figcaption>
+    <table class="striped">
+      <thead>
+        <tr>
+          <th scope="col">Week of</th>
+          <th scope="col" class="number">All sources</th>
+          {% for site in sources.values() %}<th scope="col" class="number">{{ site.name }}</th>{% endfor %}
+          <th scope="col" class="number">Name a skill</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in jobs %}
+          <tr>
+            <th scope="row">{{ week_label(row.total.week, row.total.partial) }}</th>
+            <td class="number">{{ row.total.jobs | thousands }}</td>
+            {% for slug in sources %}<td class="number">{{ row.by_source[slug] | thousands }}</td>{% endfor %}
+            <td class="number">{{ row.total.with_skills | thousands }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </figure>
+{% endif %}
+{% endblock %}

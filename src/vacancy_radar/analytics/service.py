@@ -79,7 +79,10 @@ class Analytics:
     summary: Summary
     # Months with skill counts, newest first.
     months: tuple[date, ...]
-    # The month asked for, or the newest; None for a month without data.
+    # The month of top skills: the one asked for, or the newest with data;
+    # None when no job names a skill yet.
+    month: date | None
+    # Top skills of `month`; None when it has no data.
     top_skills: TopSkills | None
     # Weekly salaries of one level, or of every level when None, oldest week first.
     level: Level | None
@@ -108,6 +111,7 @@ async def read_analytics(
     return Analytics(
         summary=totals,
         months=available,
+        month=chosen,
         top_skills=await _top_skills(session, chosen, coverage) if chosen else None,
         level=level,
         salaries=await _salaries(session, level or ALL, coverage),

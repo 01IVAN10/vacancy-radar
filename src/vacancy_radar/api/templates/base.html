@@ -24,7 +24,11 @@
     article.job header { margin-bottom: 0.75rem; }
     article.job p { margin-bottom: 0.5rem; }
     article.job footer { margin-top: 0.75rem; }
+    .chart { position: relative; height: 22rem; }
+    figure table { margin-top: 1rem; }
+    td.number, th.number { text-align: right; font-variant-numeric: tabular-nums; }
   </style>
+  {% block scripts %}{% endblock %}
 </head>
 {# Every HTMX request carries the CSRF token in a header; plain forms send a hidden field. #}
 <body hx-headers='{{ {"X-CSRF-Token": csrf_token} | tojson }}'>
@@ -33,6 +37,7 @@
       <ul><li><a href="/"><strong>Vacancy Radar</strong></a></li></ul>
       <ul>
         <li><a href="{{ url_for('vacancies').path }}">Vacancies</a></li>
+        <li><a href="{{ url_for('analytics').path }}">Analytics</a></li>
         {% if user %}
           <li><a href="{{ url_for('subscriptions_list').path }}">Subscriptions</a></li>
           <li><a href="{{ url_for('telegram_page').path }}">Telegram</a></li>

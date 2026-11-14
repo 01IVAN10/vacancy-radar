@@ -1,8 +1,10 @@
-"""What the routes depend on: the web app's config, a database session, the signed-in user."""
+"""What the routes depend on: the web app's config, a database session, the signed-in user,
+the current moment."""
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -82,3 +84,11 @@ def _page_path(request: Request) -> str:
         url = urlsplit(current)
     path = url.path or "/"
     return f"{path}?{url.query}" if url.query else path
+
+
+def current_time() -> datetime:
+    """The current moment, aware; tests override this dependency to fix it."""
+    return datetime.now(UTC)
+
+
+Now = Annotated[datetime, Depends(current_time)]
