@@ -157,6 +157,9 @@ def committed_database(
                 "telegram_link_token, app_user RESTART IDENTITY"
             )
         )
+        # Materialized views keep their rows after TRUNCATE; empty them too.
+        for view in connection.scalars(text("SELECT matviewname FROM pg_matviews")).all():
+            connection.execute(text(f"REFRESH MATERIALIZED VIEW {view}"))
 
 
 @pytest.fixture

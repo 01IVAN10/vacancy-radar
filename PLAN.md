@@ -151,8 +151,8 @@ Decisions (2026-11-09, measured on the Neon backup of that day, details in `docs
 ### Stage 9: Search and analytics
 - [x] FTS `search_vector` (`simple` + `unaccent`), GIN on it and on `skills` (the trigram index on `title` exists since stage 8: `ix_vacancy_title_trgm`; see `docs/search.md`)
 - [x] Vacancy search page: FTS + filters + pagination (`/vacancies`, one result per job)
-- [ ] Materialized views: top skills per month, salary ranges per week, new vacancies per week (each with `n`)
-- [ ] Periodic refresh task
+- [x] Materialized views: top skills per month, salary ranges per week, new vacancies per week (each with `n`; jobs, not postings; `docs/analytics.md`)
+- [x] Periodic refresh task (`analytics.refresh`, Beat every 30 min, CLI `python -m vacancy_radar.analytics`)
 - [ ] `/analytics` page with Chart.js, medians hidden below the minimum sample
 - [x] `docs/search.md`: queries, EXPLAIN ANALYZE before/after indexes (today and ×50), findings
 - [ ] `docs/analytics.md`: queries, EXPLAIN ANALYZE, findings

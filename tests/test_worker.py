@@ -3,12 +3,14 @@ from pathlib import Path
 import pytest
 import structlog
 
+from vacancy_radar.analytics.tasks import ANALYTICS_REFRESH
 from vacancy_radar.collect.tasks import FETCH_SOURCE, fetch_source
 from vacancy_radar.config import get_settings
 from vacancy_radar.normalize.tasks import NORMALIZE_PENDING
 from vacancy_radar.notify.tasks import NOTIFY_MATCH, NOTIFY_SEND
 from vacancy_radar.sources import ADAPTERS
 from vacancy_radar.worker import (
+    ANALYTICS_REFRESH_EVERY,
     COLLECT_EVERY,
     NORMALIZE_EVERY,
     NOTIFY_MATCH_EVERY,
@@ -61,6 +63,14 @@ def test_beat_sends_the_notification_tasks() -> None:
         assert schedule[name]["task"] == task
         assert schedule[name]["schedule"] == every
         assert celery_app.tasks[task].name == task
+
+
+def test_beat_refreshes_the_analytics_views() -> None:
+    entry = celery_app.conf.beat_schedule["analytics-refresh"]
+
+    assert entry["task"] == ANALYTICS_REFRESH
+    assert entry["schedule"] == ANALYTICS_REFRESH_EVERY
+    assert celery_app.tasks[ANALYTICS_REFRESH].name == ANALYTICS_REFRESH
 
 
 def test_unpicked_beat_messages_expire_before_the_next_one_is_sent() -> None:

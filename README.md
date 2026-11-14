@@ -49,6 +49,7 @@ uv run alembic upgrade head      # create or update the database schema
 | Normalize new and changed items into `vacancy` | `uv run python -m vacancy_radar.normalize` |
 | Rebuild every vacancy after a parser change | `uv run python -m vacancy_radar.normalize --rebuild` |
 | Give new vacancies a cluster (deduplication), without sending | `uv run python -m vacancy_radar.clusters` |
+| Refresh the analytics views ([`docs/analytics.md`](docs/analytics.md)) | `uv run python -m vacancy_radar.analytics` |
 | New migration after a model change | `uv run alembic revision --autogenerate -m "<what changed>"` |
 
 Tests run against a real PostgreSQL database, because the project relies on FTS, GIN indexes, `pg_trgm` and `ON CONFLICT`. By default they use `vacancy_radar_test` on the Compose Postgres, create it on first run and apply the Alembic migrations to it. Each test runs inside a transaction that is rolled back afterwards. Set `TEST_DATABASE_URL` to use another server. The suite refuses to run against a database whose name does not end in `_test`. Tests that need Redis use database 15 on the Compose Redis and empty it around each test. Set `TEST_REDIS_URL` to use another one, but never the broker database of a running worker.

@@ -1,8 +1,9 @@
 """Celery application for background workers and the Beat scheduler.
 
-Collection, reprocessing and notifications stay independent of Celery: the
-tasks in `vacancy_radar.collect.tasks`, `vacancy_radar.normalize.tasks` and
-`vacancy_radar.notify.tasks` are thin wrappers around plain functions.
+Collection, reprocessing, notifications and analytics stay independent of
+Celery: the tasks in `vacancy_radar.collect.tasks`,
+`vacancy_radar.normalize.tasks`, `vacancy_radar.notify.tasks` and
+`vacancy_radar.analytics.tasks` are thin wrappers around plain functions.
 """
 
 from collections.abc import Iterable
@@ -34,10 +35,14 @@ NOTIFY_MATCH_EVERY = timedelta(minutes=5)
 NOTIFY_MATCH_EXPIRES_SECONDS = 240
 NOTIFY_SEND_EVERY = timedelta(minutes=1)
 NOTIFY_SEND_EXPIRES_SECONDS = 50
+# Analytics changes slowly: weeks and months of jobs. A refresh takes
+# milliseconds today and seconds with a year of data (docs/analytics.md).
+ANALYTICS_REFRESH_EVERY = timedelta(minutes=30)
+ANALYTICS_REFRESH_EXPIRES_SECONDS = 25 * 60
 
 
 def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str, Any]]:
-    """One `fetch_source` entry per source, then reprocessing and notifications.
+    """One `fetch_source` entry per source, then reprocessing, notifications and analytics.
 
     Separate entries per source mean a slow source never delays another.
     """
@@ -65,6 +70,11 @@ def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str
         "schedule": NOTIFY_SEND_EVERY,
         "options": {"expires": NOTIFY_SEND_EXPIRES_SECONDS},
     }
+    schedule["analytics-refresh"] = {
+        "task": "analytics.refresh",
+        "schedule": ANALYTICS_REFRESH_EVERY,
+        "options": {"expires": ANALYTICS_REFRESH_EXPIRES_SECONDS},
+    }
     return schedule
 
 
@@ -81,6 +91,7 @@ def create_celery() -> Celery:
             "vacancy_radar.collect.tasks",
             "vacancy_radar.normalize.tasks",
             "vacancy_radar.notify.tasks",
+            "vacancy_radar.analytics.tasks",
         ],
     )
     app.conf.update(
