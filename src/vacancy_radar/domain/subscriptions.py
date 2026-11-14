@@ -14,12 +14,11 @@ salary (`SalaryFloor`).
 Matching a vacancy against the filter lives in `domain/matching.py`.
 """
 
-import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Self
 
-from vacancy_radar.domain.choices import one_of
+from vacancy_radar.domain.choices import known_values, monthly_usd, one_of
 from vacancy_radar.domain.seniority import LEVELS, Level
 from vacancy_radar.domain.skills import SKILLS, SKILLS_BY_SLUG
 from vacancy_radar.domain.work_format import WORK_FORMATS, WorkFormat
@@ -29,13 +28,6 @@ SKILLS_MATCHES: Final[tuple[SkillsMatch, ...]] = ("any", "all")
 
 MAX_NAME_LENGTH: Final = 80
 MAX_SKILLS: Final = 20
-# Above any monthly IT salary in Ukraine; a larger number is a typo.
-MAX_MIN_SALARY_USD: Final = 100_000
-
-# "3000", or thousands separated by the same comma or space: "3,000", "1 000 000".
-# Bounded, so no input reaches int() with more than nine digits.
-_AMOUNT: Final = re.compile(r"\d{1,6}|\d{1,3}([, ])\d{3}(?:\1\d{3})?", re.ASCII)
-
 # Position of each skill in the dictionary, so skills are stored in its order.
 _SKILL_ORDER: Final = {skill.slug: position for position, skill in enumerate(SKILLS)}
 
@@ -170,9 +162,9 @@ def build_subscription(form: SubscriptionForm) -> SubscriptionDraft:
 
     if form.skills_match not in SKILLS_MATCHES:
         errors["skills_match"] = "Choose whether any or all of the skills must match."
-    levels = _known(form.seniority, LEVELS, "seniority", errors)
-    formats = _known(form.work_formats, WORK_FORMATS, "work_formats", errors)
-    amount = _amount(form.min_salary_usd, errors)
+    levels = known_values(form.seniority, LEVELS, "seniority", errors)
+    formats = known_values(form.work_formats, WORK_FORMATS, "work_formats", errors)
+    amount = monthly_usd(form.min_salary_usd, "min_salary_usd", errors)
 
     if not errors and not (skills or levels or formats or amount):
         errors["filter"] = "Choose at least one skill, level, work format or minimum salary."
@@ -189,28 +181,3 @@ def build_subscription(form: SubscriptionForm) -> SubscriptionDraft:
             salary=None if amount is None else SalaryFloor(amount, form.include_unsalaried),
         ),
     )
-
-
-def _known[T: str](
-    values: Iterable[str], allowed: tuple[T, ...], field: str, errors: dict[str, str]
-) -> tuple[T, ...]:
-    chosen = set(values)
-    unknown = sorted(chosen - set(allowed))
-    if unknown:
-        errors[field] = f"Unknown values: {', '.join(unknown)}."
-    return tuple(value for value in allowed if value in chosen)
-
-
-def _amount(raw: str, errors: dict[str, str]) -> int | None:
-    text = raw.strip()
-    if not text:
-        return None
-    # The pattern caps the length, so int() never sees thousands of digits.
-    if not _AMOUNT.fullmatch(text):
-        errors["min_salary_usd"] = "Enter a whole number of dollars, such as 3000."
-        return None
-    amount = int(text.replace(",", "").replace(" ", ""))
-    if not 1 <= amount <= MAX_MIN_SALARY_USD:
-        errors["min_salary_usd"] = f"Enter an amount from 1 to {MAX_MIN_SALARY_USD:,}."
-        return None
-    return amount

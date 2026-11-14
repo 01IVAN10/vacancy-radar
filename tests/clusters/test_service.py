@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
-from tests.notify.factories import JOB_TEXT, NOW, add_vacancy
+from tests.factories import JOB_TEXT, NOW, add_vacancy
 from tests.support import fixture_bytes
 from vacancy_radar.clusters.service import CANDIDATE_WINDOW, Busy, Clustered, assign_clusters
 from vacancy_radar.collect.service import ensure_source, upsert_raw_items

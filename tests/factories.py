@@ -1,7 +1,7 @@
-"""Rows for notification tests, written straight to the tables.
+"""Rows for database tests, written straight to the tables.
 
 Vacancies are inserted already normalized instead of going through the
-parsers, so each test states exactly the fields matching reads. Each one gets
+parsers, so each test states exactly the fields the code under test reads. Each gets
 a unique company, so no clustering rule can take two of them for the same job.
 """
 

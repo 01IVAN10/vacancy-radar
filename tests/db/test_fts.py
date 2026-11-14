@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from tests.notify.factories import add_vacancy
+from tests.factories import add_vacancy
 from vacancy_radar.db.fts import text_query
 from vacancy_radar.db.models import Vacancy
 
@@ -34,6 +34,13 @@ def found(session: Session, query: str) -> list[str]:
         ("Google's", "Google's"),
         ("'quoted'", "'quoted'"),
         ("Київ'", "Київ'"),
+        # A slash between words becomes a space: the parser reads "a/b" as a file path.
+        ("Python/FastAPI", "Python FastAPI"),
+        ("пʼять/шість", "пять шість"),
+        ("C++/C#/.NET", "C++ C# .NET"),
+        ("24/7", "24 7"),
+        # Other slashes stay, or "</p>" would become an unclosed tag.
+        ("</p> a / b /path", "</p> a / b /path"),
     ],
 )
 def test_search_text_joins_ukrainian_words_at_their_apostrophe(
@@ -73,6 +80,19 @@ def test_english_possessive_is_found_by_its_word(db_session: Session) -> None:
     add_vacancy(db_session, title="Engineer", description="Join Google's cloud team")
 
     assert found(db_session, "google") == ["Engineer"]
+
+
+def test_words_joined_by_a_slash_are_found_one_by_one(db_session: Session) -> None:
+    add_vacancy(db_session, title="Backend", description="Python/FastAPI, C/C++, CI/CD")
+
+    for typed in ["python", "fastapi", "ci/cd", '"python/fastapi"', "cd"]:
+        assert found(db_session, typed) == ["Backend"], typed
+
+
+def test_markup_left_in_a_description_hides_no_words(db_session: Session) -> None:
+    add_vacancy(db_session, title="Mobile", description="<script>x</script> Kotlin and Swift")
+
+    assert found(db_session, "kotlin swift") == ["Mobile"]
 
 
 def test_title_ranks_above_company_above_description(db_session: Session) -> None:

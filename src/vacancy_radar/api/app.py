@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from vacancy_radar import __version__
-from vacancy_radar.api import auth, health, pages, subscriptions, telegram
+from vacancy_radar.api import auth, health, pages, search, subscriptions, telegram
 from vacancy_radar.api.deps import LoginRequiredError, Sessions, WebConfig
 from vacancy_radar.api.middleware import CurrentUserMiddleware
 from vacancy_radar.api.templating import templates
@@ -42,6 +42,7 @@ def create_app(settings: Settings | None = None, sessions: Sessions | None = Non
     app.add_exception_handler(StarletteHTTPException, _error_page)  # type: ignore[arg-type]
     app.include_router(health.router)
     app.include_router(pages.router)
+    app.include_router(search.router)
     app.include_router(auth.router)
     app.include_router(subscriptions.router)
     app.include_router(telegram.router)

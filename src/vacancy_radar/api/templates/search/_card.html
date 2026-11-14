@@ -1,0 +1,21 @@
+{# One job: the title, normalized fields, a short excerpt and links to the originals. #}
+<article class="job">
+  <header>
+    <strong>{{ result.title }}</strong>
+    {% if result.place %}<br><small>{{ result.place }}</small>{% endif %}
+  </header>
+  {% if result.salary %}<p>💰 {{ result.salary }}</p>{% endif %}
+  {% if result.details %}<p><small>{{ result.details }}</small></p>{% endif %}
+  {% if result.skills %}<p><small>{{ result.skills }}</small></p>{% endif %}
+  <p class="snippet"><small>{{ result.snippet_html | safe }}</small></p>
+  <footer>
+    <small>
+      First seen {{ result.first_seen }}
+      {%- if result.postings %} · Open on
+        {% for posting in result.postings -%}
+          <a href="{{ posting.url }}" rel="noopener nofollow">{{ posting.source_name }}</a>{% if not loop.last %} · {% endif %}
+        {%- endfor %}
+      {%- endif %}
+    </small>
+  </footer>
+</article>

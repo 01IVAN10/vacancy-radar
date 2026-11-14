@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.support import add_user, csrf_token, sign_in
-from vacancy_radar.api.subscriptions import CATEGORY_LABELS, describe
+from vacancy_radar.api.labels import CATEGORY_LABELS
+from vacancy_radar.api.subscriptions import describe
 from vacancy_radar.db.models import Subscription, User
 from vacancy_radar.domain.skills import SKILLS, Category
 from vacancy_radar.domain.subscriptions import SalaryFloor, SubscriptionFilter

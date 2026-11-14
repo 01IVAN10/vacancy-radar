@@ -1,0 +1,43 @@
+{# Checkbox groups shared by the subscription form and the search form. #}
+
+{# Skills grouped by category; a group with a chosen skill starts open. #}
+{% macro skill_picker(skill_groups, chosen) %}
+  {% for label, skills in skill_groups %}
+    {% set picked = skills | selectattr("slug", "in", chosen) | list %}
+    <details{% if picked %} open{% endif %}>
+      <summary>{{ label }}{% if picked %} ({{ picked | length }}){% endif %}</summary>
+      <div class="choices">
+        {% for skill in skills %}
+          <label>
+            <input type="checkbox" name="skills" value="{{ skill.slug }}"
+                   {% if skill.slug in chosen %}checked{% endif %}>
+            {{ skill.name }}
+          </label>
+        {% endfor %}
+      </div>
+    </details>
+  {% endfor %}
+{% endmacro %}
+
+{# Whether a vacancy needs any or all of the chosen skills. #}
+{% macro skills_match_choice(value) %}
+  <label>
+    <input type="radio" name="skills_match" value="any" {% if value != "all" %}checked{% endif %}>
+    any of the chosen skills
+  </label>
+  <label>
+    <input type="radio" name="skills_match" value="all" {% if value == "all" %}checked{% endif %}>
+    all of them
+  </label>
+{% endmacro %}
+
+{# One checkbox per entry of `options` (value: label). #}
+{% macro checkboxes(name, options, chosen) %}
+  {% for value, label in options.items() %}
+    <label>
+      <input type="checkbox" name="{{ name }}" value="{{ value }}"
+             {% if value in chosen %}checked{% endif %}>
+      {{ label }}
+    </label>
+  {% endfor %}
+{% endmacro %}
