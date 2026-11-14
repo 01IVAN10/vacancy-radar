@@ -185,7 +185,24 @@ The database held 3814 raw items (Djinni 2424, DOU 1390) in 20 MB.
 
 - **No items were missed** after the cron-job.org trigger. The only two runs that missed items are DOU's at 09:53 and 12:33 UTC on 2026-11-06, before it (see [Triggers](#triggers)).
 - **Djinni has a wide margin.** Its 30-minute gaps are under a third of its shortest window, and every run at the peak shared at least 45 of its 100 items with the previous one.
-- **DOU is fetched every 45 minutes more often than every 30**: 143 gaps of 45 minutes and 82 of 30 (see [Runs per day](#runs-per-day)). 45 minutes is half its shortest window, so the margin is thin. No item was missed, and the smallest overlap was 16 of 50, but the busiest single run brought 31 new items in 30 minutes (2026-11-10, 10:52 Kyiv): at that pace a 45-minute gap leaves about 4. Fixed on 2026-11-13: the collector now waits up to 2 minutes for a source that is almost due (see [Runs per day](#runs-per-day)); the DOU gaps are to be measured again.
+- **DOU is fetched every 45 minutes more often than every 30**: 143 gaps of 45 minutes and 82 of 30 (see [Runs per day](#runs-per-day)). 45 minutes is half its shortest window, so the margin is thin. No item was missed, and the smallest overlap was 16 of 50, but the busiest single run brought 31 new items in 30 minutes (2026-11-10, 10:52 Kyiv): at that pace a 45-minute gap leaves about 4. Fixed on 2026-11-13: the collector now waits up to 2 minutes for a source that is almost due (see [Runs per day](#runs-per-day)), and DOU is now fetched every 30 minutes (see [Measured after the wait](#measured-after-the-wait-2026-11-13-to-2026-11-14)).
 - **The weekend is quiet.** Both feeds barely move on Saturday and Sunday, and at night a fetch covers a day or more.
 - **The windows are shorter than the first samples** in `docs/sources.md` (2.5 h for Djinni, 1.7 h for DOU), which were taken outside the busiest hour.
 - One delayed dispatch made the longest gaps: Djinni 50 and DOU 65 minutes on 2026-11-11 at 22:57 Kyiv, a quiet hour.
+
+## Measured after the wait, 2026-11-13 to 2026-11-14
+
+The gap, status and overlap queries above, run on Neon on 2026-11-14 over the runs from the first job on the waiting collector (2026-11-13 14:37 UTC) to 2026-11-14 17:24 UTC: 27 hours, one Friday afternoon peak, then the weekend.
+
+| | Djinni | DOU |
+|---|---|---|
+| `ok` runs | 54 | 54 |
+| Failed / interrupted runs | 0 / 0 | 0 / 0 |
+| Gap min / p50 / max | 25 / 30 / 35 min | 30:01 / 30:02 / 30:02 |
+| Runs that may have missed items | 0 | 0 |
+| Overlap at the weekday peak (5 runs): min / median | 83 / 87 of 100 | 3 / 43 of 50 |
+| Overlap at other times: min / median | 90 / 100 | 45 / 50 |
+
+- **DOU is fetched every 30 minutes.** All 53 gaps were between 30:01.4 and 30:01.9, so none was shorter than the 30 minutes DOU's consent allows. Before the wait, the median gap was 45 minutes.
+- **Djinni's gaps of 25 and 35 minutes** come from GitHub's backup `schedule`: when it fires 25 minutes or more after Djinni's last request (3 times here), Djinni is due, and the next cron-job.org start then finds it 5 minutes short. Both stay far inside its window.
+- **A burst can outrun the 30-minute interval.** On Friday 2026-11-13 one employer posted 54 vacancies between 16:20 and 17:16 Kyiv. The DOU runs at 16:52 and 17:22 brought 39 and 47 new items, against the usual 1–7, and the second shared only 3 of its 50 items with the previous run. Nothing was missed: its oldest new item was posted 3 seconds after the newest item of the run before. At the old 45-minute gap, that hour's pace (86 new items in 60 minutes) would likely have pushed items out of the feed before the next fetch. A burst of more than about 50 postings in half an hour still would, and fetching DOU more often needs a new request to DOU (`docs/sources.md`, DOU).
