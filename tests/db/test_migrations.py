@@ -1,9 +1,14 @@
+import json
+import os
+import subprocess
+import sys
+
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import Engine, inspect, text
 
-from tests.support import alembic_config
+from tests.support import ALEMBIC_INI, alembic_config, to_sqlalchemy
 from vacancy_radar.db.base import Base
 
 
@@ -108,3 +113,33 @@ def test_new_search_text_rewrites_the_stored_vectors(
             )
 
     assert vector == "'fastapi':2A 'python':1A"
+
+
+def test_command_line_upgrade_logs_each_revision_as_json(
+    migrated_engine: Engine, test_database_url: str
+) -> None:
+    # The Compose `migrate` service runs `alembic upgrade head`; its log must say what it applied.
+    config = alembic_config(test_database_url)
+    command.downgrade(config, "0016")
+    try:
+        result = subprocess.run(  # noqa: S603 - this interpreter, fixed arguments, no shell
+            [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), "upgrade", "head"],
+            env=os.environ | {"DATABASE_URL": to_sqlalchemy(test_database_url)},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    finally:
+        # Leave the database migrated for the tests that run after this one, even on failure.
+        command.upgrade(config, "head")
+
+    records = [json.loads(line) for line in result.stderr.splitlines()]
+    assert [(r["event"], r.get("revision")) for r in records] == [
+        ("migrate.applied", "0017"),
+        ("migrate.finished", None),
+    ]
+    applied, finished = records
+    assert applied["direction"] == "upgrade"
+    assert applied["down_revision"] == "0016"
+    assert applied["description"]
+    assert finished["heads"] == ["0017"]

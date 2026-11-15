@@ -16,6 +16,7 @@ from vacancy_radar.api.templating import STATIC_DIR, STATIC_PATH, templates
 from vacancy_radar.auth.csrf import CSRFCookieMiddleware
 from vacancy_radar.config import Settings, check_production, get_settings
 from vacancy_radar.db.engine import get_async_sessionmaker
+from vacancy_radar.log import configure_logging
 
 
 def create_app(settings: Settings | None = None, sessions: Sessions | None = None) -> FastAPI:
@@ -25,11 +26,18 @@ def create_app(settings: Settings | None = None, sessions: Sessions | None = Non
     their own. Fails at once without `SECRET_KEY`, so a bad deployment does
     not start and serve pages nobody can sign in to, and in production
     without an https site URL or with a development key (`check_production`).
+
+    Configures logging like every other process, so events from the web app
+    are JSON on stderr in a container. In production the generated API docs
+    (`/docs`, `/redoc`, `/openapi.json`) are off: the site is HTML, not an
+    API, and Swagger UI loads scripts from a CDN that a Content Security
+    Policy would block. They stay on locally.
     """
     settings = settings or get_settings()
     if settings.secret_key is None:
         raise RuntimeError("SECRET_KEY is required for the web app")
     check_production(settings)
+    configure_logging(settings.log_level)
     config = WebConfig(
         secret_key=settings.secret_key.get_secret_value(),
         cookie_secure=settings.cookie_secure,
@@ -37,7 +45,14 @@ def create_app(settings: Settings | None = None, sessions: Sessions | None = Non
         telegram_bot_username=settings.telegram_bot_username,
     )
 
-    app = FastAPI(title="Vacancy Radar", version=__version__)
+    docs = settings.app_env != "production"
+    app = FastAPI(
+        title="Vacancy Radar",
+        version=__version__,
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
     app.state.config = config
     app.add_middleware(CurrentUserMiddleware, config=config)
     app.add_middleware(CSRFCookieMiddleware, secure=config.cookie_secure)
