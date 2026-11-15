@@ -1,6 +1,5 @@
 """Registration and sign-in on the async engine used by the web app."""
 
-from collections.abc import Mapping
 from typing import Final
 
 from psycopg import errors as pg_errors
@@ -18,18 +17,13 @@ from vacancy_radar.domain.accounts import (
     normalize_email,
     password_error,
 )
+from vacancy_radar.domain.choices import FormError
 
 EMAIL_TAKEN: Final = "An account with this email already exists."
 
 
-class RegistrationError(Exception):
-    """The form cannot become an account. `errors` maps a field to its message."""
-
-    def __init__(self, errors: Mapping[str, str]) -> None:
-        if not errors:
-            raise ValueError("a RegistrationError needs at least one field error")
-        self.errors = dict(errors)
-        super().__init__("; ".join(f"{field}: {message}" for field, message in self.errors.items()))
+class RegistrationError(FormError):
+    """The form cannot become an account."""
 
 
 async def register(session: AsyncSession, email: str, password: str) -> User:

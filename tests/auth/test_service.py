@@ -8,6 +8,7 @@ from vacancy_radar.auth.passwords import verify_password
 from vacancy_radar.auth.service import EMAIL_TAKEN, RegistrationError, authenticate, register
 from vacancy_radar.db.models import User
 from vacancy_radar.domain.accounts import INVALID_EMAIL
+from vacancy_radar.domain.choices import FormError
 
 pytestmark = pytest.mark.anyio
 
@@ -77,11 +78,13 @@ async def test_authenticate_replaces_an_outdated_hash(async_session: AsyncSessio
     assert verify_password(PASSWORD, user.password_hash) == (True, None)
 
 
-def test_registration_error_names_its_fields() -> None:
+def test_registration_error_is_a_form_error() -> None:
     error = RegistrationError({"email": EMAIL_TAKEN})
 
+    assert isinstance(error, FormError)
+    assert error.errors == {"email": EMAIL_TAKEN}
     assert str(error) == f"email: {EMAIL_TAKEN}"
-    with pytest.raises(ValueError, match="at least one field error"):
+    with pytest.raises(ValueError, match="RegistrationError needs at least one field error"):
         RegistrationError({})
 
 
