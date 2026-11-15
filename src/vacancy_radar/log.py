@@ -1,6 +1,7 @@
 """structlog setup.
 
-Shared by every command-line entry point, the Telegram bot and the Celery worker.
+Shared by every command-line entry point, the web app, the Telegram bot, the
+Celery worker and the Alembic migrations.
 """
 
 import logging

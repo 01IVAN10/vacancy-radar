@@ -8,7 +8,7 @@ from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
-# Scripts the pages load, served at `STATIC_PATH`.
+# Scripts and styles the pages load, served at `STATIC_PATH`.
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_PATH: Final = "/static"
 
