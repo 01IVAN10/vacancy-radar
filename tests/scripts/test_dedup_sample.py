@@ -13,15 +13,15 @@ from scripts.dedup_sample import (
     audited_pairs,
     classify,
     close,
-    containment,
     pair_outcome,
     plainly_same,
     read_labels,
 )
-from vacancy_radar.domain.dedup import MIN_SHINGLES, DedupFacts
+from vacancy_radar.domain.dedup import DedupFacts
 
 TEXT = frozenset(range(100))
-# Shares 75 of its 100 shingles with TEXT: Jaccard 0.6, containment 0.75.
+# Shares 75 of its 100 shingles with TEXT: Jaccard 0.6, containment 0.75, too
+# little by either measure, across sources too.
 EDITED_TEXT = frozenset(range(25, 100)) | frozenset(range(1000, 1025))
 
 
@@ -36,19 +36,6 @@ def facts(**overrides: Any) -> DedupFacts:
         "shingles": TEXT,
     }
     return DedupFacts.of(**(fields | overrides))
-
-
-# --- containment ------------------------------------------------------------------
-
-
-def test_containment_is_the_share_of_the_smaller_set() -> None:
-    assert containment(frozenset(range(30)), TEXT) == 1.0
-    assert containment(frozenset(range(60, 140)), TEXT) == 0.5
-
-
-def test_short_texts_contain_nothing() -> None:
-    short = frozenset(range(MIN_SHINGLES - 1))
-    assert containment(short, TEXT) == 0.0
 
 
 # --- pair_outcome -----------------------------------------------------------------

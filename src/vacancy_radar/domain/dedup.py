@@ -12,8 +12,12 @@ both their titles and their descriptions agree:
   because sites decorate titles differently ("Embedded Software Engineer"
   on Djinni, "Embedded Software Engineer (R&D)" on DOU).
 - **Descriptions.** At least `TEXT_THRESHOLD` of their word shingles are
-  shared. Companies reuse an introduction across different roles, so text
-  alone is never enough, and titles alone even less so.
+  shared. Across sources it is also enough that at least
+  `CROSS_SOURCE_CONTAINMENT` of the shorter description's shingles are in
+  the other one, because one site often adds a company introduction or a
+  list of benefits around the text the other shows. Companies reuse an
+  introduction across different roles, so text alone is never enough, and
+  titles alone even less so.
 
 A new vacancy joins a cluster only if it is the same job as every vacancy
 already in it, so a chain of near matches never pulls two different jobs
@@ -45,6 +49,13 @@ CANDIDATE_WINDOW: Final = timedelta(days=30)
 # 2026-11-09 sample every merge at this level was right; lower levels started
 # to merge different roles of one company (docs/deduplication.md).
 TEXT_THRESHOLD: Final = 0.85
+# Across sources: share of the shorter description's shingles found in the
+# other one. On the 2026-11-15 sample every pair joined at this level was the
+# same job, and the one labelled different that only the text kept apart
+# shared 0.68 (docs/deduplication.md, Containment across sources). Within one
+# source only `TEXT_THRESHOLD` counts: a site's reposts keep their text, and
+# one company's roles there share theirs.
+CROSS_SOURCE_CONTAINMENT: Final = 0.9
 # Words per shingle: long enough that a common phrase ("experience with
 # Python") is rarely what two texts share, short enough that one edited word
 # changes only four shingles.
@@ -176,10 +187,29 @@ def text_similarity(a: frozenset[int], b: frozenset[int]) -> float:
     return shared / (len(a) + len(b) - shared)
 
 
-def same_job(a: DedupFacts, b: DedupFacts, *, threshold: float = TEXT_THRESHOLD) -> Comparison:
+def text_containment(a: frozenset[int], b: frozenset[int]) -> float:
+    """The share of the smaller shingle set found in the other; 0.0 if either is too short.
+
+    A text with a paragraph added keeps a containment of 1.0 while its
+    Jaccard similarity drops with every word added.
+    """
+    if len(a) < MIN_SHINGLES or len(b) < MIN_SHINGLES:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
+
+
+def same_job(
+    a: DedupFacts,
+    b: DedupFacts,
+    *,
+    threshold: float = TEXT_THRESHOLD,
+    containment: float | None = CROSS_SOURCE_CONTAINMENT,
+) -> Comparison:
     """Whether `a` and `b` are the same job; the cheap checks run first.
 
-    `threshold` is the text similarity required; only measurements change it.
+    `threshold` is the text similarity required, and `containment` the share
+    of the shorter text that is enough across sources (None: not used). Only
+    measurements change them.
     """
     if a.seniority != b.seniority:
         return Different("seniority")
@@ -192,9 +222,13 @@ def same_job(a: DedupFacts, b: DedupFacts, *, threshold: float = TEXT_THRESHOLD)
     if not _titles_agree(a, b):
         return Different("title")
     similarity = text_similarity(a.shingles, b.shingles)
-    if similarity < threshold:
-        return Different("text")
-    return Same(similarity)
+    if similarity >= threshold or (
+        containment is not None
+        and a.source != b.source
+        and text_containment(a.shingles, b.shingles) >= containment
+    ):
+        return Same(similarity)
+    return Different("text")
 
 
 def pick_cluster(
@@ -202,19 +236,24 @@ def pick_cluster(
     clusters: Mapping[int, Sequence[DedupFacts]],
     *,
     threshold: float = TEXT_THRESHOLD,
+    containment: float | None = CROSS_SOURCE_CONTAINMENT,
 ) -> int | None:
     """The cluster `new` joins, or None if it opens a cluster of its own.
 
     `new` qualifies for a cluster when it is the same job as every member.
-    Of several, it joins the one whose least similar member is most similar,
-    and of equals the one with the lowest id, so the choice is repeatable.
+    Of several, it joins the one whose least similar member is most similar
+    (by `text_similarity`), and of equals the one with the lowest id, so the
+    choice is repeatable. `threshold` and `containment` go to `same_job`.
     """
     best: tuple[float, int] | None = None
     for cluster_id in sorted(clusters):
         members = clusters[cluster_id]
         if not members:
             continue
-        comparisons = [same_job(new, member, threshold=threshold) for member in members]
+        comparisons = [
+            same_job(new, member, threshold=threshold, containment=containment)
+            for member in members
+        ]
         similarities = [c.similarity for c in comparisons if isinstance(c, Same)]
         if len(similarities) < len(comparisons):
             continue

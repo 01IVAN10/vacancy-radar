@@ -20,6 +20,8 @@ from vacancy_radar.sources import ADAPTERS, djinni
 
 # A description that shares nothing with JOB_TEXT.
 OTHER_TEXT = " ".join(f"other{n}" for n in range(60))
+# A company introduction one site puts before the text.
+INTRO = " ".join(f"intro{n}" for n in range(100))
 
 
 def posting(session: Session, **fields: Any) -> Vacancy:
@@ -70,6 +72,23 @@ def test_a_repost_joins_the_cluster(db_session: Session) -> None:
 
     assert assign_clusters(db_session) == Clustered(opened=1, joined=1)
     assert cluster_of(db_session, repost) == cluster_of(db_session, original)
+
+
+def test_a_twin_that_adds_an_introduction_on_another_source_joins(db_session: Session) -> None:
+    """All of the Djinni text is inside DOU's: Jaccard 0.36, containment 1.0."""
+    djinni_posting = posting(db_session, first_seen_at=NOW - timedelta(hours=3))
+    dou_posting = posting(db_session, source="dou", description=f"{INTRO} {JOB_TEXT}")
+
+    assert assign_clusters(db_session) == Clustered(opened=1, joined=1)
+    assert cluster_of(db_session, dou_posting) == cluster_of(db_session, djinni_posting)
+
+
+def test_a_repost_that_adds_an_introduction_opens_its_own_cluster(db_session: Session) -> None:
+    """Within one source only the Jaccard similarity counts."""
+    posting(db_session, first_seen_at=NOW - timedelta(hours=3))
+    posting(db_session, description=f"{INTRO} {JOB_TEXT}")
+
+    assert assign_clusters(db_session) == Clustered(opened=2)
 
 
 def test_another_role_with_the_same_text_opens_its_own_cluster(db_session: Session) -> None:
@@ -244,4 +263,4 @@ def test_every_duplicate_pair_of_the_sample_shares_a_cluster(db_session: Session
         if cluster_of(db_session, a) != cluster_of(db_session, b)
     ]
     assert apart == []
-    assert len(pairs) == 14
+    assert len(pairs) == 17

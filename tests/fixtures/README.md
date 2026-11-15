@@ -19,7 +19,7 @@ Items were picked to cover cases the parsers must handle, not at random.
 
 ## Deduplication pairs
 
-`dedup/pairs.json` holds 29 pairs of vacancies from the Neon backup of 2026-11-09, each labelled with the verdict `domain.dedup.same_job` must give (`same`, or the reason they differ) and why. The pairs were chosen for being hard: one job under decorated titles on two sites, reposts, different roles of one company that share their text, and one known miss. `docs/deduplication.md` explains each kind.
+`dedup/pairs.json` holds 33 pairs of vacancies from the Neon backup of 2026-11-15, each labelled with the verdict `domain.dedup.same_job` must give (`same`, or the reason they differ) and why. The pairs were chosen for being hard: one job under decorated titles on two sites, one text that a site adds an introduction to, reposts, different roles of one company that share their text, and one known miss. `docs/deduplication.md` explains each kind.
 
 Unlike the feeds, these are not copies of the items. Each vacancy keeps its source and its feed title, which public pages show anyway, and its description only as sorted 32-bit shingle hashes (base64 of big-endian integers). The hashes were made with a random key that was thrown away, so the words cannot be recovered by trying them one at a time; DOU's consent rules out publishing full descriptions (`docs/sources.md`, condition 3). The file records the `NORMALIZER_VERSION` its descriptions were read with. `scripts/dedup_sample.py fixture` rebuilds it from a local backup; it fetches nothing.
 

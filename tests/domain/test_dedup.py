@@ -9,6 +9,7 @@ import pytest
 
 from tests.support import fixture_bytes
 from vacancy_radar.domain.dedup import (
+    CROSS_SOURCE_CONTAINMENT,
     MIN_SHINGLES,
     TEXT_THRESHOLD,
     DedupFacts,
@@ -17,6 +18,7 @@ from vacancy_radar.domain.dedup import (
     pick_cluster,
     same_job,
     shingles,
+    text_containment,
     text_similarity,
     title_words,
 )
@@ -27,6 +29,9 @@ from vacancy_radar.domain.salary import Salary
 TEXT = frozenset(range(100))
 # Shares 90 of 110 shingles with TEXT: 0.82, below the threshold.
 OTHER_TEXT = frozenset(range(10, 110))
+# TEXT with a block of 200 shingles added, as DOU adds a company introduction:
+# Jaccard 0.33, but all of TEXT is in it.
+TEXT_WITH_INTRO = TEXT | frozenset(range(1000, 1200))
 
 
 def facts(**overrides: Any) -> DedupFacts:
@@ -113,6 +118,17 @@ def test_short_texts_are_never_similar() -> None:
     assert text_similarity(short, short) == 0.0
 
 
+def test_text_containment_is_the_share_of_the_smaller_set_in_the_other() -> None:
+    assert text_containment(TEXT, TEXT_WITH_INTRO) == 1.0
+    assert text_containment(TEXT_WITH_INTRO, TEXT) == 1.0
+    assert text_containment(frozenset(range(60, 140)), TEXT) == 0.5
+
+
+def test_short_texts_contain_nothing() -> None:
+    short = frozenset(range(MIN_SHINGLES - 1))
+    assert text_containment(short, TEXT) == 0.0
+
+
 # --- same_job -----------------------------------------------------------------------
 
 
@@ -161,6 +177,44 @@ def test_a_title_without_words_matches_nothing() -> None:
 
 def test_text_below_the_threshold_is_another_job() -> None:
     assert same_job(facts(), facts(shingles=OTHER_TEXT)) == Different("text")
+
+
+def test_across_sources_a_text_inside_the_other_is_the_same_job() -> None:
+    """One site adds an introduction around the text the other shows."""
+    with_intro = facts(source="dou", shingles=TEXT_WITH_INTRO)
+    assert same_job(facts(), with_intro) == Same(text_similarity(TEXT, TEXT_WITH_INTRO))
+
+
+def test_across_sources_containment_has_a_threshold() -> None:
+    at_threshold = frozenset(range(10, 100)) | frozenset(range(1000, 1200))  # 90 of 100
+    below = frozenset(range(11, 100)) | frozenset(range(1000, 1200))  # 89 of 100
+    assert isinstance(same_job(facts(), facts(source="dou", shingles=at_threshold)), Same)
+    assert same_job(facts(), facts(source="dou", shingles=below)) == Different("text")
+
+
+def test_within_one_source_a_text_inside_the_other_is_another_job() -> None:
+    """Reposts keep their text; one company's roles on one site share theirs."""
+    assert same_job(facts(), facts(shingles=TEXT_WITH_INTRO)) == Different("text")
+
+
+def test_containment_does_not_override_the_title_or_a_veto() -> None:
+    sales = facts(source="dou", title="Sales Manager", shingles=TEXT_WITH_INTRO)
+    senior = facts(
+        source="dou",
+        title="Senior Python Developer",
+        seniority=["senior"],
+        shingles=TEXT_WITH_INTRO,
+    )
+    assert same_job(facts(), sales) == Different("title")
+    assert same_job(facts(), senior) == Different("seniority")
+
+
+def test_measurements_may_turn_containment_off() -> None:
+    with_intro = facts(source="dou", shingles=TEXT_WITH_INTRO)
+    assert same_job(facts(), with_intro, containment=None) == Different("text")
+    assert pick_cluster(facts(), {1: [with_intro]}) == 1
+    assert pick_cluster(facts(), {1: [with_intro]}, containment=None) is None
+    assert CROSS_SOURCE_CONTAINMENT == 0.9
 
 
 def test_measurements_may_try_another_threshold() -> None:
@@ -293,7 +347,7 @@ def test_skips_a_cluster_without_members() -> None:
 
 # --- real pairs ---------------------------------------------------------------------
 
-# Pairs from the Neon backup of 2026-11-09, chosen for being hard: one job under
+# Pairs from the Neon backup of 2026-11-15, chosen for being hard: one job under
 # decorated titles, different roles that share a text, and a known miss. Each
 # vacancy keeps its feed title, normalized here by the real parsers, and its
 # description as shingle hashes made with a key that was thrown away. See
