@@ -51,7 +51,7 @@ import subprocess
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from itertools import combinations
 from pathlib import Path
@@ -68,8 +68,10 @@ from vacancy_radar.db.models import RawVacancy, Source, Vacancy
 from vacancy_radar.domain import dedup
 from vacancy_radar.domain.dedup import (
     CROSS_SOURCE_CONTAINMENT,
+    RULE,
     TEXT_THRESHOLD,
     DedupFacts,
+    DedupRule,
     Same,
     pick_cluster,
     same_job,
@@ -408,7 +410,7 @@ def measure(items: list[Item]) -> None:
 
     previous: set[frozenset[str]] = set()
     for threshold in THRESHOLDS:
-        groups = clusters(items, facts, threshold=threshold)
+        groups = clusters(items, facts, rule=replace(RULE, text_threshold=threshold))
         multi = [group for group in groups if len(group) > 1]
         print(
             f"threshold {threshold}: {len(groups)} clusters, {len(multi)} with several "
@@ -493,17 +495,15 @@ def clusters(
     items: Iterable[Item],
     facts: dict[str, DedupFacts],
     *,
-    threshold: float = TEXT_THRESHOLD,
-    containment: float | None = CROSS_SOURCE_CONTAINMENT,
+    rule: DedupRule = RULE,
 ) -> list[frozenset[str]]:
-    """Cluster the items in the given order with `pick_cluster`."""
+    """Cluster the items in the given order with `pick_cluster` under `rule`."""
     members: dict[int, list[str]] = {}
     for number, item in enumerate(items):
         found = pick_cluster(
             facts[item.key],
             {cid: [facts[k] for k in keys] for cid, keys in members.items()},
-            threshold=threshold,
-            containment=containment,
+            rule=rule,
         )
         members.setdefault(number if found is None else found, []).append(item.key)
     return [frozenset(keys) for keys in members.values()]
@@ -583,6 +583,8 @@ def audit(items: list[Item], labels_path: Path) -> int:
         f"by hand ({checked['unsure']} unsure); {len(joined) - checked.total()} joined "
         "plainly, without a label"
     )
+    measures = Counter(measure_of(facts[pair.a], facts[pair.b]) for pair in joined)
+    print(f"joined pairs by the measure that decided: {dict(measures)}")
     same = [pair for pair in pairs if pair.verdict == "same"]
     print(f"same jobs joined: {sum(pair.outcome == 'together' for pair in same)} of {len(same)}")
     for source in sorted({fact.source for fact in facts.values()}):
@@ -599,16 +601,7 @@ def audit(items: list[Item], labels_path: Path) -> int:
     for key in sorted(labels.keys() - {pair.key for pair in pairs}):
         print(f"  label of a pair no longer audited (parsers changed?): {key}")
 
-    print("pairs joined by the containment allowed across sources:")
-    for value in AUDIT_CONTAINMENTS:
-        groups = clusters(items, facts, containment=value)
-        cluster_of = {key: number for number, group in enumerate(groups) for key in group}
-        joined = [
-            pair
-            for pair in classify(close_pairs, facts, cluster_of, labels)
-            if pair.outcome == "together"
-        ]
-        print(f"  {'none' if value is None else value}: {len(joined)}; {count_labels(joined)}")
+    print_containment_sweep(items, facts, close_pairs, labels, current=pairs)
 
     unlabelled = [pair for pair in pairs if pair.verdict is None]
     for pair in unlabelled:
@@ -617,6 +610,37 @@ def audit(items: list[Item], labels_path: Path) -> int:
     if unlabelled:
         print(f"{len(unlabelled)} pairs need a label in {labels_path}")
     return 1 if unlabelled else 0
+
+
+def print_containment_sweep(
+    items: list[Item],
+    facts: dict[str, DedupFacts],
+    close_pairs: list[tuple[str, str]],
+    labels: dict[str, Label],
+    *,
+    current: list[AuditedPair],
+) -> None:
+    """The labels of the pairs each of `AUDIT_CONTAINMENTS` joins across sources.
+
+    `current` is the audit under `RULE`, so its containment is not clustered again.
+    """
+    print("pairs joined by the containment allowed across sources:")
+    for value in AUDIT_CONTAINMENTS:
+        if value == RULE.cross_source_containment:
+            audited = current
+        else:
+            rule = replace(RULE, cross_source_containment=value)
+            groups = clusters(items, facts, rule=rule)
+            cluster_of = {key: number for number, group in enumerate(groups) for key in group}
+            audited = classify(close_pairs, facts, cluster_of, labels)
+        joined = [pair for pair in audited if pair.outcome == "together"]
+        print(f"  {'none' if value is None else value}: {len(joined)}; {count_labels(joined)}")
+
+
+def measure_of(a: DedupFacts, b: DedupFacts) -> str:
+    """The measure that makes `a` and `b` the same job, or why they are not."""
+    comparison = same_job(a, b)
+    return comparison.by if isinstance(comparison, Same) else comparison.reason
 
 
 def read_labels(path: Path) -> dict[str, Label]:
@@ -686,9 +710,8 @@ def pair_outcome(a: DedupFacts, b: DedupFacts, *, together: bool) -> Outcome:
     """`together`, or why the pair is apart: a rule of `same_job`, or `linkage`."""
     if together:
         return "together"
-    comparison = same_job(a, b, threshold=0.0)
-    if isinstance(comparison, dedup.Different):
-        return comparison.reason
+    if (reason := dedup.first_difference(a, b)) is not None:
+        return reason
     return "linkage" if isinstance(same_job(a, b), Same) else "text"
 
 

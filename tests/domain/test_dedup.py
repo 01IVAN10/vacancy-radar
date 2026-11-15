@@ -3,18 +3,20 @@
 import base64
 import json
 import struct
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from tests.support import fixture_bytes
 from vacancy_radar.domain.dedup import (
-    CROSS_SOURCE_CONTAINMENT,
     MIN_SHINGLES,
+    RULE,
     TEXT_THRESHOLD,
     DedupFacts,
     Different,
     Same,
+    first_difference,
     pick_cluster,
     same_job,
     shingles,
@@ -133,7 +135,7 @@ def test_short_texts_contain_nothing() -> None:
 
 
 def test_same_title_and_text_in_one_source_is_the_same_job() -> None:
-    assert same_job(facts(), facts()) == Same(1.0)
+    assert same_job(facts(), facts()) == Same(1.0, "jaccard")
 
 
 def test_one_source_needs_the_same_title_words() -> None:
@@ -142,7 +144,9 @@ def test_one_source_needs_the_same_title_words() -> None:
 
 
 def test_across_sources_one_title_may_add_words() -> None:
-    assert same_job(facts(), facts(source="dou", title="Python Developer (Fintech)")) == Same(1.0)
+    assert same_job(facts(), facts(source="dou", title="Python Developer (Fintech)")) == Same(
+        1.0, "jaccard"
+    )
 
 
 def test_across_sources_titles_that_both_add_words_differ() -> None:
@@ -153,10 +157,12 @@ def test_across_sources_titles_that_both_add_words_differ() -> None:
 
 def test_across_sources_one_title_may_add_an_internal_number() -> None:
     plain = facts(title="Senior Web Analyst")
-    assert same_job(plain, facts(source="dou", title="Senior Web Analyst (#1264)")) == Same(1.0)
+    assert same_job(plain, facts(source="dou", title="Senior Web Analyst (#1264)")) == Same(
+        1.0, "jaccard"
+    )
     embedded = facts(title="Embedded Software Engineer")
     numbered = facts(source="dou", title="Embedded Software Engineer; ID 103860")
-    assert same_job(embedded, numbered) == Same(1.0)
+    assert same_job(embedded, numbered) == Same(1.0, "jaccard")
 
 
 def test_one_source_with_two_internal_numbers_is_two_jobs() -> None:
@@ -182,7 +188,9 @@ def test_text_below_the_threshold_is_another_job() -> None:
 def test_across_sources_a_text_inside_the_other_is_the_same_job() -> None:
     """One site adds an introduction around the text the other shows."""
     with_intro = facts(source="dou", shingles=TEXT_WITH_INTRO)
-    assert same_job(facts(), with_intro) == Same(text_similarity(TEXT, TEXT_WITH_INTRO))
+    similarity = text_similarity(TEXT, TEXT_WITH_INTRO)
+    assert similarity < TEXT_THRESHOLD
+    assert same_job(facts(), with_intro) == Same(similarity, "containment")
 
 
 def test_across_sources_containment_has_a_threshold() -> None:
@@ -193,7 +201,7 @@ def test_across_sources_containment_has_a_threshold() -> None:
 
 
 def test_within_one_source_a_text_inside_the_other_is_another_job() -> None:
-    """Reposts keep their text; one company's roles on one site share theirs."""
+    """Containment was measured across sources only."""
     assert same_job(facts(), facts(shingles=TEXT_WITH_INTRO)) == Different("text")
 
 
@@ -211,24 +219,33 @@ def test_containment_does_not_override_the_title_or_a_veto() -> None:
 
 def test_measurements_may_turn_containment_off() -> None:
     with_intro = facts(source="dou", shingles=TEXT_WITH_INTRO)
-    assert same_job(facts(), with_intro, containment=None) == Different("text")
+    jaccard_only = replace(RULE, cross_source_containment=None)
+    assert same_job(facts(), with_intro, rule=jaccard_only) == Different("text")
     assert pick_cluster(facts(), {1: [with_intro]}) == 1
-    assert pick_cluster(facts(), {1: [with_intro]}, containment=None) is None
-    assert CROSS_SOURCE_CONTAINMENT == 0.9
+    assert pick_cluster(facts(), {1: [with_intro]}, rule=jaccard_only) is None
 
 
 def test_measurements_may_try_another_threshold() -> None:
-    lower = same_job(facts(), facts(shingles=OTHER_TEXT), threshold=0.8)
-    assert lower == Same(text_similarity(TEXT, OTHER_TEXT))
-    assert pick_cluster(facts(), {1: [facts(shingles=OTHER_TEXT)]}, threshold=0.8) == 1
+    lower = replace(RULE, text_threshold=0.8)
+    assert same_job(facts(), facts(shingles=OTHER_TEXT), rule=lower) == Same(
+        text_similarity(TEXT, OTHER_TEXT), "jaccard"
+    )
+    assert pick_cluster(facts(), {1: [facts(shingles=OTHER_TEXT)]}, rule=lower) == 1
     assert TEXT_THRESHOLD == 0.85
+
+
+def test_first_difference_names_the_first_rule_besides_the_text() -> None:
+    assert first_difference(facts(), facts(source="dou", shingles=OTHER_TEXT)) is None
+    senior_go = facts(title="Senior Go Developer", seniority=["senior"])
+    assert first_difference(facts(), senior_go) == "seniority"
+    assert first_difference(facts(), facts(title="Go Developer")) == "title"
 
 
 @pytest.mark.parametrize(
     ("first", "second", "expected"),
     [
-        pytest.param((), (), Same(1.0), id="both-unknown"),
-        pytest.param(("middle",), ("middle",), Same(1.0), id="equal"),
+        pytest.param((), (), Same(1.0, "jaccard"), id="both-unknown"),
+        pytest.param(("middle",), ("middle",), Same(1.0, "jaccard"), id="equal"),
         pytest.param((), ("junior",), Different("seniority"), id="one-unknown"),
         pytest.param(("middle", "senior"), ("senior",), Different("seniority"), id="overlapping"),
     ],
@@ -242,9 +259,9 @@ def test_levels_must_be_equal(
 @pytest.mark.parametrize(
     ("first", "second", "expected"),
     [
-        pytest.param("SoftServe", " softserve ", Same(1.0), id="case-and-spaces"),
-        pytest.param("SoftServe", None, Same(1.0), id="one-unknown"),
-        pytest.param("SoftServe", "  ", Same(1.0), id="blank-is-unknown"),
+        pytest.param("SoftServe", " softserve ", Same(1.0, "jaccard"), id="case-and-spaces"),
+        pytest.param("SoftServe", None, Same(1.0, "jaccard"), id="one-unknown"),
+        pytest.param("SoftServe", "  ", Same(1.0, "jaccard"), id="blank-is-unknown"),
         pytest.param("Talan AI", "ORB DRONES", Different("company"), id="different"),
     ],
 )
@@ -257,8 +274,8 @@ def test_known_companies_must_agree(
 @pytest.mark.parametrize(
     ("first", "second", "expected"),
     [
-        pytest.param(("Київ", "Львів"), ("львів",), Same(1.0), id="shared-place"),
-        pytest.param(("Київ",), (), Same(1.0), id="one-unknown"),
+        pytest.param(("Київ", "Львів"), ("львів",), Same(1.0, "jaccard"), id="shared-place"),
+        pytest.param(("Київ",), (), Same(1.0, "jaccard"), id="one-unknown"),
         pytest.param(("Київ",), ("Одеса",), Different("cities"), id="disjoint"),
     ],
 )
@@ -271,8 +288,10 @@ def test_known_places_must_overlap(
 @pytest.mark.parametrize(
     ("first", "second", "expected"),
     [
-        pytest.param(Salary(2000, 3000, "USD"), Salary(2500, 4000, "USD"), Same(1.0), id="overlap"),
-        pytest.param(Salary(2000, 3000, "USD"), None, Same(1.0), id="one-unknown"),
+        pytest.param(
+            Salary(2000, 3000, "USD"), Salary(2500, 4000, "USD"), Same(1.0, "jaccard"), id="overlap"
+        ),
+        pytest.param(Salary(2000, 3000, "USD"), None, Same(1.0, "jaccard"), id="one-unknown"),
         pytest.param(
             Salary(2000, 3000, "USD"), Salary(3500, 4000, "USD"), Different("salary"), id="apart"
         ),
@@ -280,14 +299,23 @@ def test_known_places_must_overlap(
             Salary(3000, None, "USD"), Salary(None, 2500, "USD"), Different("salary"), id="open"
         ),
         pytest.param(
-            Salary(3000, None, "USD"), Salary(None, 3500, "USD"), Same(1.0), id="open-meet"
+            Salary(3000, None, "USD"),
+            Salary(None, 3500, "USD"),
+            Same(1.0, "jaccard"),
+            id="open-meet",
         ),
         # Different currencies or periods are not compared: rates and hours are unknown here.
         pytest.param(
-            Salary(2000, 3000, "USD"), Salary(90_000, None, "UAH"), Same(1.0), id="currency"
+            Salary(2000, 3000, "USD"),
+            Salary(90_000, None, "UAH"),
+            Same(1.0, "jaccard"),
+            id="currency",
         ),
         pytest.param(
-            Salary(20, 30, "USD", "hour"), Salary(3000, 4000, "USD"), Same(1.0), id="period"
+            Salary(20, 30, "USD", "hour"),
+            Salary(3000, 4000, "USD"),
+            Same(1.0, "jaccard"),
+            id="period",
         ),
     ],
 )
@@ -324,8 +352,8 @@ def test_must_be_the_same_job_as_every_member() -> None:
     django = facts(source="dou", title="Python Developer (Django)")
     flask = facts(source="dou", title="Python Developer (Flask)")
     plain = facts(title="Python Developer")
-    assert same_job(django, plain) == Same(1.0)
-    assert same_job(plain, flask) == Same(1.0)
+    assert same_job(django, plain) == Same(1.0, "jaccard")
+    assert same_job(plain, flask) == Same(1.0, "jaccard")
 
     assert pick_cluster(flask, {1: [django, plain]}) is None
 
@@ -335,6 +363,17 @@ def test_prefers_the_cluster_whose_least_similar_member_is_closest() -> None:
     nearer = frozenset(range(1, 100))  # 0.99 with TEXT
     clusters = {1: [facts(shingles=near)], 2: [facts(shingles=TEXT), facts(shingles=nearer)]}
     assert pick_cluster(facts(), clusters) == 2
+
+
+def test_prefers_a_cluster_of_near_equal_texts_to_one_joined_by_containment() -> None:
+    """A text inside another has a low Jaccard similarity, so it ranks below equal texts."""
+    by_containment = facts(source="dou", shingles=TEXT_WITH_INTRO)
+    by_jaccard = facts(source="dou", shingles=frozenset(range(5, 100)))  # 0.95
+    assert same_job(facts(), by_containment) == Same(
+        text_similarity(TEXT, TEXT_WITH_INTRO), "containment"
+    )
+
+    assert pick_cluster(facts(), {1: [by_containment], 2: [by_jaccard]}) == 2
 
 
 def test_of_equal_clusters_joins_the_oldest() -> None:

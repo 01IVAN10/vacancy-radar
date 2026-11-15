@@ -51,10 +51,11 @@ CANDIDATE_WINDOW: Final = timedelta(days=30)
 TEXT_THRESHOLD: Final = 0.85
 # Across sources: share of the shorter description's shingles found in the
 # other one. On the 2026-11-15 sample every pair joined at this level was the
-# same job, and the one labelled different that only the text kept apart
-# shared 0.68 (docs/deduplication.md, Containment across sources). Within one
-# source only `TEXT_THRESHOLD` counts: a site's reposts keep their text, and
-# one company's roles there share theirs.
+# same job. The margin is thin: two roles of one company template share 0.83
+# (Business analyst and Product manager) and only their titles keep them
+# apart, and Djinni's feed has no company or places to veto with. Within one
+# source it was not measured, so only `TEXT_THRESHOLD` counts there
+# (docs/deduplication.md, Containment across sources).
 CROSS_SOURCE_CONTAINMENT: Final = 0.9
 # Words per shingle: long enough that a common phrase ("experience with
 # Python") is rarely what two texts share, short enough that one edited word
@@ -82,6 +83,25 @@ SYMBOL_WORDS: Final = (
 WORD = re.compile(r"\w+")
 
 Reason = Literal["seniority", "company", "cities", "salary", "title", "text"]
+# The measure of the descriptions that made two vacancies the same job.
+type Measure = Literal["jaccard", "containment"]
+
+
+@dataclass(frozen=True, slots=True)
+class DedupRule:
+    """How much two descriptions of one job share. `RULE` is the rule in use.
+
+    Measurements try other values with `dataclasses.replace(RULE, ...)`.
+    """
+
+    # The Jaccard similarity that is enough, from any sources.
+    text_threshold: float = TEXT_THRESHOLD
+    # The share of the shorter description inside the other that is enough
+    # across sources; None turns it off.
+    cross_source_containment: float | None = CROSS_SOURCE_CONTAINMENT
+
+
+RULE: Final = DedupRule()
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,9 +150,16 @@ class DedupFacts:
 
 @dataclass(frozen=True, slots=True)
 class Same:
-    """The same job; `similarity` is the share of shingles the descriptions share."""
+    """The same job.
+
+    `similarity` is the Jaccard similarity of the descriptions, and `by` the
+    measure that decided: "jaccard" when the similarity reached the rule's
+    threshold, "containment" when only the shorter text being inside the
+    other did. A pair joined by containment can have a low `similarity`.
+    """
 
     similarity: float
+    by: Measure
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,36 +225,37 @@ def text_containment(a: frozenset[int], b: frozenset[int]) -> float:
     return len(a & b) / min(len(a), len(b))
 
 
-def same_job(
-    a: DedupFacts,
-    b: DedupFacts,
-    *,
-    threshold: float = TEXT_THRESHOLD,
-    containment: float | None = CROSS_SOURCE_CONTAINMENT,
-) -> Comparison:
-    """Whether `a` and `b` are the same job; the cheap checks run first.
+def first_difference(a: DedupFacts, b: DedupFacts) -> Reason | None:
+    """The first veto or title rule that tells `a` and `b` apart, or None.
 
-    `threshold` is the text similarity required, and `containment` the share
-    of the shorter text that is enough across sources (None: not used). Only
-    measurements change them.
+    Everything `same_job` checks except the descriptions, cheapest first.
     """
     if a.seniority != b.seniority:
-        return Different("seniority")
+        return "seniority"
     if a.company is not None and b.company is not None and a.company != b.company:
-        return Different("company")
+        return "company"
     if a.cities and b.cities and not a.cities & b.cities:
-        return Different("cities")
+        return "cities"
     if not _salaries_agree(a.salary, b.salary):
-        return Different("salary")
+        return "salary"
     if not _titles_agree(a, b):
-        return Different("title")
+        return "title"
+    return None
+
+
+def same_job(a: DedupFacts, b: DedupFacts, *, rule: DedupRule = RULE) -> Comparison:
+    """Whether `a` and `b` are the same job under `rule`; the cheap checks run first."""
+    if (reason := first_difference(a, b)) is not None:
+        return Different(reason)
     similarity = text_similarity(a.shingles, b.shingles)
-    if similarity >= threshold or (
-        containment is not None
+    if similarity >= rule.text_threshold:
+        return Same(similarity, "jaccard")
+    if (
+        rule.cross_source_containment is not None
         and a.source != b.source
-        and text_containment(a.shingles, b.shingles) >= containment
+        and text_containment(a.shingles, b.shingles) >= rule.cross_source_containment
     ):
-        return Same(similarity)
+        return Same(similarity, "containment")
     return Different("text")
 
 
@@ -235,25 +263,23 @@ def pick_cluster(
     new: DedupFacts,
     clusters: Mapping[int, Sequence[DedupFacts]],
     *,
-    threshold: float = TEXT_THRESHOLD,
-    containment: float | None = CROSS_SOURCE_CONTAINMENT,
+    rule: DedupRule = RULE,
 ) -> int | None:
-    """The cluster `new` joins, or None if it opens a cluster of its own.
+    """The cluster `new` joins under `rule`, or None if it opens a cluster of its own.
 
     `new` qualifies for a cluster when it is the same job as every member.
     Of several, it joins the one whose least similar member is most similar
-    (by `text_similarity`), and of equals the one with the lowest id, so the
-    choice is repeatable. `threshold` and `containment` go to `same_job`.
+    by Jaccard, and of equals the one with the lowest id, so the choice is
+    repeatable. So a cluster whose texts `new` nearly equals beats one it
+    joins only because one text is inside another: a pair joined by
+    containment always has a Jaccard similarity below the threshold.
     """
     best: tuple[float, int] | None = None
     for cluster_id in sorted(clusters):
         members = clusters[cluster_id]
         if not members:
             continue
-        comparisons = [
-            same_job(new, member, threshold=threshold, containment=containment)
-            for member in members
-        ]
+        comparisons = [same_job(new, member, rule=rule) for member in members]
         similarities = [c.similarity for c in comparisons if isinstance(c, Same)]
         if len(similarities) < len(comparisons):
             continue

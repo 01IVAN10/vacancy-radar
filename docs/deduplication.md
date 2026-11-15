@@ -21,9 +21,9 @@ Two vacancies are the same job when no veto applies and both their titles and th
 
 **Shingles** (`shingles`) are every run of 4 consecutive words of the plain description, casefolded, each as a 32-bit BLAKE2b hash. The hashes are only computed and compared, never stored. They do not hide the text: neighbouring shingles share three words, so a description can be rebuilt from its hashes by trying one word at a time. A set of hashes that is published must use a secret key that is then thrown away (`shingles(text, key=...)`); the similarity stays the same. Descriptions with fewer than 20 shingles are never similar to anything.
 
-**Containment** (`text_containment`) is the share of the smaller shingle set found in the other. A text with a paragraph added keeps a containment of 1.0, while its Jaccard similarity drops with every word added. It counts only across sources: a site's reposts keep their text, and one company's roles on one site share theirs, so within one source only Jaccard decides ([Containment across sources](#containment-across-sources-2026-11-15)).
+**Containment** (`text_containment`) is the share of the smaller shingle set found in the other. A text with a paragraph added keeps a containment of 1.0, while its Jaccard similarity drops with every word added. It counts only across sources, where it was measured; within one source only Jaccard decides ([Containment across sources](#containment-across-sources-2026-11-15)). `same_job` says which measure decided (`Same.by`), and its `similarity` is always the Jaccard similarity, so a pair joined by containment can have a low one.
 
-**Clusters** (`pick_cluster`). A new vacancy joins a cluster only when it is the same job as *every* member (complete linkage), so a chain of near matches cannot pull two different jobs together. If several clusters qualify, it joins the one whose least similar member is most similar, and of equals the oldest. Clusters are never merged afterwards (PLAN.md, stage 8 decisions).
+**Clusters** (`pick_cluster`). A new vacancy joins a cluster only when it is the same job as *every* member (complete linkage), so a chain of near matches cannot pull two different jobs together. If several clusters qualify, it joins the one whose least similar member is most similar by Jaccard, and of equals the oldest. So a cluster whose texts the new vacancy nearly equals beats one it joins only because one text is inside another. Clusters are never merged afterwards (PLAN.md, stage 8 decisions).
 
 ## How it runs
 
@@ -63,7 +63,7 @@ In no order are different jobs merged: the order only decides which twin the sha
 
 **Places.** DOU titles carry format and abroad flags (`віддалено`, `гібрид`, `за кордоном`), but `domain/dou_title.py` takes them apart from the places, and none of the 46 distinct places in the sample is a flag. So a republication that only changes its format flag is not kept apart by the places veto.
 
-**Known misses.** "Senior Web Analyst (#1264)" on DOU and "Senior Web Analyst" on Djinni (text 0.75, joined by containment since 2026-11-15); "Event&Marketing Manager" and "Events and Marketing Manager" (`event` and `events` are different words); "Creative Marketing Manager" on Djinni and "Senior Creative Marketing Manager" on DOU (levels differ); a few pairs whose texts were edited between sites (0.5–0.85). Each is a job sent twice, which the rule accepts.
+**Known misses.** "Event&Marketing Manager" and "Events and Marketing Manager" (`event` and `events` are different words); "Creative Marketing Manager" on Djinni and "Senior Creative Marketing Manager" on DOU (levels differ); a few pairs whose texts were edited between sites (0.5–0.85). Each is a job sent twice, which the rule accepts.
 
 ### Measured again on 2026-11-13
 
@@ -123,12 +123,16 @@ Most of the 40 pairs the text kept apart in the check above are one text with a 
 | 0.85 | 331 | 75 | 0 | 0 | 256 |
 | 0.80 | 336 | 79 | 0 | 1 | 256 |
 
-The only pair labelled different that only the text kept apart has a containment of 0.68 ("Product Designer" for two products of one company). 0.85 is still clean on this sample; 0.90 keeps a margin below it.
+**The margin is thin.** Of the pairs labelled different that only the text keeps apart, the closest has a containment of 0.68 ("Product Designer" for two products of one company). But the closest different pair overall has 0.83: a Business analyst on Djinni and a Product manager on DOU written on one company template, kept apart only by their titles. Djinni's feed has no company or places, so between Djinni and DOU only the level, the salary, the title rule and the text guard a pair. Two roles of one company template under the same title words, with a text at least 90% inside the other's, would be merged. The sample has none. Across sources, the only pair with agreeing titles at 0.8–0.9 that is not the same job is the agency Eleven's "Hardware Engineer" (0.83, unsure). Within Djinni, the same-title pairs at 0.8–0.9 that were read are reposts with small edits ("in Kyiv" becoming "in Kyiv or Lviv"), not different roles.
+
+**No minimum size for containment.** A short text is more easily inside another. Requiring the shorter one to have at least 100 shingles would drop 2 of the 28 pairs joined only by containment (Artellence's "AI Automation Engineer", 74, and "Business operations manager", 86: Djinni shows only the part about the role) and would stop no merge seen in the sample. It is the first thing to try if a wrong merge turns up.
+
+**Within one source** containment was not measured, so it does not count there. The sample has at least 12 pairs of Djinni postings with the same title words, a containment of 0.8–1.0 and a Jaccard of 0.66–0.80; the five read are reposts with small edits, so they are missed reposts, sent twice. Labelling pairs within one source is the next step if that is to change.
 
 - **Precision.** No wrong merge among the 71 joined pairs labelled by hand.
 - **Recall.** 327 of 370 (88%, was 81%). Left apart: `text` 12 (containment 0.76–0.89, intros and benefits rewritten), `title` 15 and `seniority` 11 as before, `salary` 1, `linkage` 4.
 - **Overlap.** 321 of 1670 DOU jobs (19%) are posted on Djinni too. `measure` gives 4051 clusters, 373 with several vacancies: 321 join Djinni and DOU, 52 are Djinni reposts.
-- **Arrival order.** Two more pairs depend on it (`linkage` 4, was 2), and 10 random orders change up to 6 clusters (was 4). No order can join different jobs: every pair from different sources that the rule calls the same job is labelled `same` or plainly the same, and within one source nothing changed.
+- **Arrival order.** Two more pairs depend on it (`linkage` 4, was 2), and 10 random orders change up to 6 clusters (was 4). No order can join different jobs: every pair from different sources that the rule calls the same job is labelled `same` or plainly the same, and within one source nothing changed. One case can now cost a duplicate: a Djinni posting joined to DOU by containment, then reposted on Djinni with a few edits, gives a repost that is the same job as the first posting by Jaccard but no longer 90% inside DOU's text, so it opens a cluster of its own and is sent again. Without containment it would have joined the first posting. How often reposts are edited that much is not measured.
 - **The real code.** `check` gives the same 4051 clusters as `measure`.
 - **Later postings.** 388 vacancies joined a cluster after its first posting, 90 of them more than 2 days later (67 from the other site, 21 of those with another work format).
 
@@ -151,7 +155,7 @@ Each vacancy keeps its feed title, which public pages show anyway, and the test 
 | Task | Command |
 |---|---|
 | Measure the rule (every number on this page) | `uv run python scripts/dedup_sample.py measure BACKUP.dump` |
-| Check the rule across sources against hand labels | `uv run python scripts/dedup_sample.py audit BACKUP.dump` |
+| Check the rule across sources against hand labels (about a minute: it clusters the backup once per containment it compares) | `uv run python scripts/dedup_sample.py audit BACKUP.dump` |
 | Check that the real cluster assignment gives the same clusters | `uv run python scripts/dedup_sample.py check BACKUP.dump postgresql+psycopg://…/vacancy_radar_dedup_check` |
 | Rebuild the test fixture | `uv run python scripts/dedup_sample.py fixture BACKUP.dump tests/fixtures/dedup/pairs.json` |
 
