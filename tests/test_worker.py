@@ -5,7 +5,7 @@ import structlog
 
 from vacancy_radar.analytics.tasks import ANALYTICS_REFRESH
 from vacancy_radar.collect.tasks import FETCH_SOURCE, fetch_source
-from vacancy_radar.config import get_settings
+from vacancy_radar.config import ProductionSettingsError, get_settings
 from vacancy_radar.normalize.tasks import NORMALIZE_PENDING
 from vacancy_radar.notify.tasks import NOTIFY_MATCH, NOTIFY_SEND
 from vacancy_radar.sources import ADAPTERS
@@ -97,6 +97,20 @@ def test_create_celery_requires_redis_url(monkeypatch: pytest.MonkeyPatch, tmp_p
     get_settings.cache_clear()
     try:
         with pytest.raises(RuntimeError, match="REDIS_URL is required"):
+            create_celery()
+    finally:
+        get_settings.cache_clear()
+
+
+def test_create_celery_refuses_production_without_https(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://radar.example")
+    monkeypatch.chdir(tmp_path)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(ProductionSettingsError, match="PUBLIC_BASE_URL must use https"):
             create_celery()
     finally:
         get_settings.cache_clear()

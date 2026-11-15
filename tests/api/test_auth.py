@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from httpx import ASGITransport, AsyncClient, Response
+from pydantic import AnyHttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +16,7 @@ from vacancy_radar.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from vacancy_radar.auth.service import EMAIL_TAKEN
 from vacancy_radar.auth.session import SESSION_COOKIE
 from vacancy_radar.auth.tokens import issue_token
-from vacancy_radar.config import get_settings
+from vacancy_radar.config import ProductionSettingsError, get_settings
 from vacancy_radar.db.models import User
 
 pytestmark = pytest.mark.anyio
@@ -298,7 +299,9 @@ async def test_csrf_header_is_accepted_for_htmx(client: AsyncClient) -> None:
 async def test_production_cookies_are_secure(
     async_session: AsyncSession, test_sessions: Sessions, password_hash: str
 ) -> None:
-    settings = get_settings().model_copy(update={"app_env": "production"})
+    settings = get_settings().model_copy(
+        update={"app_env": "production", "public_base_url": AnyHttpUrl("https://radar.example")}
+    )
     app = create_app(settings, sessions=test_sessions)
     await add_user(async_session, password_hash, "ivan@example.com")
 
@@ -319,6 +322,15 @@ def test_app_does_not_start_without_a_secret_key() -> None:
     settings = get_settings().model_copy(update={"secret_key": None})
 
     with pytest.raises(RuntimeError, match="SECRET_KEY is required"):
+        create_app(settings)
+
+
+def test_app_does_not_start_in_production_without_https() -> None:
+    settings = get_settings().model_copy(
+        update={"app_env": "production", "public_base_url": AnyHttpUrl("http://radar.example")}
+    )
+
+    with pytest.raises(ProductionSettingsError, match="PUBLIC_BASE_URL must use https"):
         create_app(settings)
 
 

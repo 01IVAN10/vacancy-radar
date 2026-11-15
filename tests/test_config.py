@@ -1,10 +1,22 @@
 import pytest
 from pydantic import ValidationError
 
-from vacancy_radar.config import Settings, get_settings
+from vacancy_radar.config import (
+    MIN_SECRET_KEY_LENGTH,
+    ProductionSettingsError,
+    Settings,
+    check_production,
+    get_settings,
+)
 
 DATABASE_URL = "postgresql+psycopg://user:secret@db.example:5432/vacancy_radar"
 REDIS_URL = "redis://cache.example:6379/0"
+# The keys committed in `compose.yaml` and `.env.example`.
+DEVELOPMENT_KEYS = (
+    "local-development-only-not-a-secret-000000",
+    "change-me-local-development-only-0000000000",
+)
+PRODUCTION_KEY = "p" * MIN_SECRET_KEY_LENGTH
 
 
 @pytest.fixture
@@ -117,15 +129,107 @@ def test_secret_key_is_optional_and_hidden(env: pytest.MonkeyPatch) -> None:
     assert "s" * 40 not in repr(settings)
 
 
-@pytest.mark.parametrize(
-    ("app_env", "secure"), [("local", False), ("test", False), ("production", True)]
-)
-def test_cookies_are_secure_in_production_only(
-    env: pytest.MonkeyPatch, app_env: str, secure: bool
+@pytest.mark.parametrize("value", ["", "k" * (MIN_SECRET_KEY_LENGTH - 1)])
+def test_short_secret_key_is_rejected_without_echoing_it(
+    env: pytest.MonkeyPatch, value: str
 ) -> None:
+    env.setenv("SECRET_KEY", value)
+
+    with pytest.raises(ValidationError, match="at least 32 characters") as error:
+        load()
+
+    assert "input_value" not in str(error.value)
+    if value:
+        assert value not in str(error.value)
+
+
+def test_invalid_database_url_is_not_echoed(env: pytest.MonkeyPatch) -> None:
+    # A rejected URL may still hold a real password.
+    env.setenv("DATABASE_URL", "mysql://user:hunter2@db.example/vacancy_radar")
+
+    with pytest.raises(ValidationError) as error:
+        load()
+
+    assert "hunter2" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("app_env", "url", "secure"),
+    [
+        ("local", None, False),
+        ("local", "https://radar.example", True),
+        ("production", "http://radar.example", False),
+        ("production", "https://radar.example", True),
+    ],
+)
+def test_cookies_are_secure_on_an_https_site(
+    env: pytest.MonkeyPatch, app_env: str, url: str | None, secure: bool
+) -> None:
+    # The scheme decides, not APP_ENV: a forgotten APP_ENV must not drop `Secure`.
     env.setenv("APP_ENV", app_env)
+    if url is not None:
+        env.setenv("PUBLIC_BASE_URL", url)
 
     assert load().cookie_secure is secure
+
+
+def test_production_settings_load_with_database_url_only(env: pytest.MonkeyPatch) -> None:
+    # The scheduled collection runs like this; only long-running processes call check_production.
+    env.delenv("REDIS_URL")
+    env.setenv("APP_ENV", "production")
+
+    settings = load()
+
+    assert (settings.app_env, settings.secret_key, settings.redis_url) == ("production", None, None)
+
+
+@pytest.mark.parametrize("key", [None, PRODUCTION_KEY])
+def test_production_check_accepts_an_https_site(env: pytest.MonkeyPatch, key: str | None) -> None:
+    env.setenv("APP_ENV", "production")
+    env.setenv("PUBLIC_BASE_URL", "https://radar.example")
+    if key is not None:
+        env.setenv("SECRET_KEY", key)
+
+    check_production(load())
+
+
+def test_production_check_rejects_a_plain_http_site(env: pytest.MonkeyPatch) -> None:
+    env.setenv("APP_ENV", "production")
+
+    with pytest.raises(ProductionSettingsError, match="PUBLIC_BASE_URL must use https"):
+        check_production(load())
+
+
+@pytest.mark.parametrize("key", DEVELOPMENT_KEYS)
+def test_production_check_rejects_a_development_key(env: pytest.MonkeyPatch, key: str) -> None:
+    env.setenv("APP_ENV", "production")
+    env.setenv("PUBLIC_BASE_URL", "https://radar.example")
+    env.setenv("SECRET_KEY", key)
+
+    with pytest.raises(ProductionSettingsError, match="SECRET_KEY is a local development key"):
+        check_production(load())
+
+
+def test_production_check_names_every_problem_at_once(env: pytest.MonkeyPatch) -> None:
+    env.setenv("APP_ENV", "production")
+    env.setenv("SECRET_KEY", DEVELOPMENT_KEYS[0])
+
+    with pytest.raises(ProductionSettingsError) as error:
+        check_production(load())
+
+    message = str(error.value)
+    assert "PUBLIC_BASE_URL must use https, got http://localhost:8000" in message
+    assert "SECRET_KEY is a local development key" in message
+    # The message names the key's problem, never the key.
+    assert DEVELOPMENT_KEYS[0] not in message
+
+
+@pytest.mark.parametrize("app_env", ["local", "test"])
+def test_production_check_ignores_other_environments(env: pytest.MonkeyPatch, app_env: str) -> None:
+    env.setenv("APP_ENV", app_env)
+    env.setenv("SECRET_KEY", DEVELOPMENT_KEYS[0])
+
+    check_production(load())
 
 
 @pytest.mark.parametrize("value", ["", "   "])

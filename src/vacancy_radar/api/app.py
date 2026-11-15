@@ -14,7 +14,7 @@ from vacancy_radar.api.deps import LoginRequiredError, Sessions, WebConfig
 from vacancy_radar.api.middleware import CurrentUserMiddleware
 from vacancy_radar.api.templating import STATIC_DIR, STATIC_PATH, templates
 from vacancy_radar.auth.csrf import CSRFCookieMiddleware
-from vacancy_radar.config import Settings, get_settings
+from vacancy_radar.config import Settings, check_production, get_settings
 from vacancy_radar.db.engine import get_async_sessionmaker
 
 
@@ -23,11 +23,13 @@ def create_app(settings: Settings | None = None, sessions: Sessions | None = Non
 
     `settings` and `sessions` default to the process-wide ones; tests pass
     their own. Fails at once without `SECRET_KEY`, so a bad deployment does
-    not start and serve pages nobody can sign in to.
+    not start and serve pages nobody can sign in to, and in production
+    without an https site URL or with a development key (`check_production`).
     """
     settings = settings or get_settings()
     if settings.secret_key is None:
         raise RuntimeError("SECRET_KEY is required for the web app")
+    check_production(settings)
     config = WebConfig(
         secret_key=settings.secret_key.get_secret_value(),
         cookie_secure=settings.cookie_secure,

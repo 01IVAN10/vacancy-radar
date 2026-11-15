@@ -7,9 +7,11 @@ poll, confirms the last batch and exits.
 Exit codes are chosen for Compose's `restart: on-failure`:
 
 - **0, stays down** when no restart can help: `TELEGRAM_BOT_TOKEN` is not
-  set (logged as a warning), or Telegram rejects it, at start or later
-  (`telegram.token_rejected`, an error). Restarting would only repeat the
-  rejected request every few seconds; the fix is a new token and a restart.
+  set (logged as a warning), production settings are invalid
+  (`telegram.misconfigured`, an error, see `check_production`), or Telegram
+  rejects the token, at start or later (`telegram.token_rejected`, an
+  error). Restarting would only repeat the same failure every few seconds;
+  the fix is a corrected `.env` and a restart.
 - **1, restarted** when starting failed for another reason, such as no
   network yet. Compose restarts the process with its own growing delay.
 """
@@ -20,7 +22,7 @@ import threading
 
 import structlog
 
-from vacancy_radar.config import get_settings
+from vacancy_radar.config import ProductionSettingsError, check_production, get_settings
 from vacancy_radar.db.engine import get_sessionmaker
 from vacancy_radar.log import configure_logging
 from vacancy_radar.telegram.client import (
@@ -37,6 +39,11 @@ logger = structlog.get_logger("vacancy_radar.telegram")
 def main() -> int:
     settings = get_settings()
     configure_logging(settings.log_level)
+    try:
+        check_production(settings)
+    except ProductionSettingsError as exc:
+        logger.error("telegram.misconfigured", error=str(exc))
+        return 0
     if settings.telegram_bot_token is None:
         logger.warning("telegram.not_configured", missing="TELEGRAM_BOT_TOKEN")
         return 0
