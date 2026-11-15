@@ -20,7 +20,8 @@ them, and reads each one's label (`same`, `different` or `unsure`) from
 the same job only when the rule joins it with the same title words and texts
 sharing at least `TEXT_THRESHOLD` ("plain"). It prints how many joined pairs
 are wrong, how many of the same jobs are joined, and why the rest are kept
-apart, and exits 1 while a pair needs a label.
+apart, then the labels of the pairs each containment in `AUDIT_CONTAINMENTS`
+would join across sources, and exits 1 while a pair needs a label.
 
 `measure` compares every new vacancy with every cluster, so it does not go
 through the cluster assignment's trigram search and time window. `check`
@@ -50,7 +51,7 @@ import subprocess
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from itertools import combinations
 from pathlib import Path
@@ -66,8 +67,11 @@ from vacancy_radar.clusters.service import MAX_PER_RUN, Clustered, assign_cluste
 from vacancy_radar.db.models import RawVacancy, Source, Vacancy
 from vacancy_radar.domain import dedup
 from vacancy_radar.domain.dedup import (
+    CROSS_SOURCE_CONTAINMENT,
+    RULE,
     TEXT_THRESHOLD,
     DedupFacts,
+    DedupRule,
     Same,
     pick_cluster,
     same_job,
@@ -203,15 +207,43 @@ PAIRS: tuple[tuple[str, str, str, str, bool], ...] = (
     (
         "djinni:857279",
         "dou:379347",
-        "text",
-        "'Product Manager' at a company that hires several",
+        "same",
+        "the whole Djinni text is inside DOU's, which adds a company paragraph",
         False,
     ),
     (
         "dou:379313",
         "djinni:857273",
         "same",
-        "probably one job, but the texts share only 0.75",
+        "DOU adds the company intro: Jaccard 0.75, the whole Djinni text inside",
+        False,
+    ),
+    (
+        "djinni:858126",
+        "dou:379918",
+        "same",
+        "DOU adds the company intro: Jaccard 0.25, containment 1.00",
+        False,
+    ),
+    (
+        "djinni:830748",
+        "dou:379231",
+        "title",
+        "one company template: Business analyst vs Product manager, containment 0.83",
+        False,
+    ),
+    (
+        "djinni:857876",
+        "dou:375686",
+        "text",
+        "Product Designer for My Drama vs for R&D, one company text, containment 0.68",
+        False,
+    ),
+    (
+        "djinni:857531",
+        "dou:379428",
+        "same",
+        "probably one job, but the company intro is rewritten: containment 0.76",
         True,
     ),
 )
@@ -227,6 +259,8 @@ RARE_SHINGLE = 8
 AUDIT_JACCARD = 0.5
 AUDIT_CONTAINMENT = 0.75
 AUDIT_LABELS = Path(__file__).with_name("dedup_labels.json")
+# The containments across sources `audit` compares, None for Jaccard only.
+AUDIT_CONTAINMENTS: tuple[float | None, ...] = (None, 0.95, CROSS_SOURCE_CONTAINMENT, 0.85, 0.8)
 
 type Label = Literal["same", "different", "unsure"]
 LABELS: tuple[Label, ...] = ("same", "different", "unsure")
@@ -376,7 +410,7 @@ def measure(items: list[Item]) -> None:
 
     previous: set[frozenset[str]] = set()
     for threshold in THRESHOLDS:
-        groups = clusters(items, facts, threshold=threshold)
+        groups = clusters(items, facts, rule=replace(RULE, text_threshold=threshold))
         multi = [group for group in groups if len(group) > 1]
         print(
             f"threshold {threshold}: {len(groups)} clusters, {len(multi)} with several "
@@ -457,23 +491,19 @@ def similar_pairs(facts: dict[str, DedupFacts], threshold: float) -> list[tuple[
     )
 
 
-def containment(a: frozenset[int], b: frozenset[int]) -> float:
-    """The share of the smaller shingle set found in the other; 0.0 if either is too short."""
-    if len(a) < dedup.MIN_SHINGLES or len(b) < dedup.MIN_SHINGLES:
-        return 0.0
-    return len(a & b) / min(len(a), len(b))
-
-
 def clusters(
-    items: Iterable[Item], facts: dict[str, DedupFacts], *, threshold: float = TEXT_THRESHOLD
+    items: Iterable[Item],
+    facts: dict[str, DedupFacts],
+    *,
+    rule: DedupRule = RULE,
 ) -> list[frozenset[str]]:
-    """Cluster the items in the given order with `pick_cluster`."""
+    """Cluster the items in the given order with `pick_cluster` under `rule`."""
     members: dict[int, list[str]] = {}
     for number, item in enumerate(items):
         found = pick_cluster(
             facts[item.key],
             {cid: [facts[k] for k in keys] for cid, keys in members.items()},
-            threshold=threshold,
+            rule=rule,
         )
         members.setdefault(number if found is None else found, []).append(item.key)
     return [frozenset(keys) for keys in members.values()]
@@ -535,7 +565,8 @@ def audit(items: list[Item], labels_path: Path) -> int:
     facts = {item.key: facts_of(item) for item in items}
     groups = clusters(items, facts)
     cluster_of = {key: number for number, group in enumerate(groups) for key in group}
-    pairs = classify(audited_pairs(facts), facts, cluster_of, labels)
+    close_pairs = audited_pairs(facts)
+    pairs = classify(close_pairs, facts, cluster_of, labels)
 
     print(
         f"pairs from different sources with texts sharing >= {AUDIT_JACCARD} (Jaccard) or "
@@ -552,6 +583,8 @@ def audit(items: list[Item], labels_path: Path) -> int:
         f"by hand ({checked['unsure']} unsure); {len(joined) - checked.total()} joined "
         "plainly, without a label"
     )
+    measures = Counter(measure_of(facts[pair.a], facts[pair.b]) for pair in joined)
+    print(f"joined pairs by the measure that decided: {dict(measures)}")
     same = [pair for pair in pairs if pair.verdict == "same"]
     print(f"same jobs joined: {sum(pair.outcome == 'together' for pair in same)} of {len(same)}")
     for source in sorted({fact.source for fact in facts.values()}):
@@ -567,6 +600,9 @@ def audit(items: list[Item], labels_path: Path) -> int:
             print(f"  labelled {pair.label}, joined plainly: {describe_pair(pair, by_key, facts)}")
     for key in sorted(labels.keys() - {pair.key for pair in pairs}):
         print(f"  label of a pair no longer audited (parsers changed?): {key}")
+
+    print_containment_sweep(items, facts, close_pairs, labels, current=pairs)
+
     unlabelled = [pair for pair in pairs if pair.verdict is None]
     for pair in unlabelled:
         print(f"  needs a label: {describe_pair(pair, by_key, facts)}")
@@ -574,6 +610,37 @@ def audit(items: list[Item], labels_path: Path) -> int:
     if unlabelled:
         print(f"{len(unlabelled)} pairs need a label in {labels_path}")
     return 1 if unlabelled else 0
+
+
+def print_containment_sweep(
+    items: list[Item],
+    facts: dict[str, DedupFacts],
+    close_pairs: list[tuple[str, str]],
+    labels: dict[str, Label],
+    *,
+    current: list[AuditedPair],
+) -> None:
+    """The labels of the pairs each of `AUDIT_CONTAINMENTS` joins across sources.
+
+    `current` is the audit under `RULE`, so its containment is not clustered again.
+    """
+    print("pairs joined by the containment allowed across sources:")
+    for value in AUDIT_CONTAINMENTS:
+        if value == RULE.cross_source_containment:
+            audited = current
+        else:
+            rule = replace(RULE, cross_source_containment=value)
+            groups = clusters(items, facts, rule=rule)
+            cluster_of = {key: number for number, group in enumerate(groups) for key in group}
+            audited = classify(close_pairs, facts, cluster_of, labels)
+        joined = [pair for pair in audited if pair.outcome == "together"]
+        print(f"  {'none' if value is None else value}: {len(joined)}; {count_labels(joined)}")
+
+
+def measure_of(a: DedupFacts, b: DedupFacts) -> str:
+    """The measure that makes `a` and `b` the same job, or why they are not."""
+    comparison = same_job(a, b)
+    return comparison.by if isinstance(comparison, Same) else comparison.reason
 
 
 def read_labels(path: Path) -> dict[str, Label]:
@@ -620,7 +687,7 @@ def close(a: DedupFacts, b: DedupFacts) -> bool:
     """Texts that share `AUDIT_JACCARD` by Jaccard or `AUDIT_CONTAINMENT` of the shorter one."""
     return (
         dedup.text_similarity(a.shingles, b.shingles) >= AUDIT_JACCARD
-        or containment(a.shingles, b.shingles) >= AUDIT_CONTAINMENT
+        or dedup.text_containment(a.shingles, b.shingles) >= AUDIT_CONTAINMENT
     )
 
 
@@ -643,9 +710,8 @@ def pair_outcome(a: DedupFacts, b: DedupFacts, *, together: bool) -> Outcome:
     """`together`, or why the pair is apart: a rule of `same_job`, or `linkage`."""
     if together:
         return "together"
-    comparison = same_job(a, b, threshold=0.0)
-    if isinstance(comparison, dedup.Different):
-        return comparison.reason
+    if (reason := dedup.first_difference(a, b)) is not None:
+        return reason
     return "linkage" if isinstance(same_job(a, b), Same) else "text"
 
 
@@ -671,7 +737,7 @@ def describe_pair(pair: AuditedPair, by_key: dict[str, Item], facts: dict[str, D
     company = by_key[pair.a].vacancy.company or by_key[pair.b].vacancy.company
     return (
         f"{pair.key} Jaccard {dedup.text_similarity(a.shingles, b.shingles):.2f} "
-        f"containment {containment(a.shingles, b.shingles):.2f} "
+        f"containment {dedup.text_containment(a.shingles, b.shingles):.2f} "
         f"{by_key[pair.a].vacancy.title!r} | {by_key[pair.b].vacancy.title!r} ({company})"
     )
 

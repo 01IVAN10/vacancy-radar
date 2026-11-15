@@ -20,7 +20,9 @@ Updated 2026-11-15.
 - **Problems on the way (findings, 2026-11-13):** GitHub's backup `schedule` started 25 runs in six days against cron-job.org's 615, so the job starts every 15 minutes, and DOU's 30-minute `min_interval` turns into 45 minutes whenever a start comes a few seconds early. Deduplication now depends on arrival order in two cases where one posting matches two twins the rule keeps apart; no different jobs are merged either way (`docs/deduplication.md`, Arrival order). `scripts/dedup_sample.py` split COPY rows on U+2028 inside descriptions.
 - **Stage 9** is done: full-text search at `/vacancies` (#40, #41, `docs/search.md`) and market analytics at `/analytics` from materialized views refreshed every half hour (#42, #43, `docs/analytics.md`). It runs locally only; Neon is at migration 0017 with empty views, because it holds raw data only, and the VPS builds them in stage 11.
 - **Problems on the way (stage 9):** a query like `-c/c++` gave a contradictory tsquery, so a word with a slash is now a phrase. The week was called complete on its Sunday, while that Sunday was still being collected. The rule for the posting shown disagreed between search and analytics, so analytics now uses every posting of a job. Late twins rewrote past source weeks, so each source counts a job in the week it appeared there; they still change skills and salaries for 30 days, which the page marks. Pico laid out the whole `role=search` form as one row. HTMX's history snapshot reset the search form on Back. HTMX silently drops a request with an invalid field unless `reportValidityOfForms` is on. `</script>` swallowed text after the first slash fix. On `/analytics`, a month asked for without data was shown in the heading while the form fell back to the newest month; the form now offers that month too. The form was sent on every change, so a keyboard user moving through the options was taken to a new page (WCAG 3.2.2); it is now sent by its button only.
-- **Next:** stage 10 (cross-source dedup verified on real data).
+- **Stage 10** is done: deduplication across Djinni and DOU is checked against 433 hand-labelled pairs from the Neon backup of 2026-11-15 (`scripts/dedup_sample.py audit`, #45). The stage 8 rule made no wrong merge but joined 301 of 370 duplicate pairs; most misses were one text with a company introduction added on one site. Across sources, a description that is 90% inside the other now counts too (containment), which joins 327 of 370 with no wrong merge (`docs/deduplication.md`). It runs locally only; the VPS clusters Neon's raw data in stage 11.
+- **Problems on the way (stage 10):** the review of #45 found that the audit let its own "plainly the same" shortcut override hand labels, and that looking for pairs through rare shingles missed 4 close pairs; labels now win and pairs are found by prefix filtering, which loses none. Since migration 0015 Neon's schema dump carries `pg_attver` column options that a plain Postgres rejects, so the check builds the schema from migrations and loads only the raw items. SKELAR's "Product Manager", a non-duplicate of the stage 8 fixture, turned out to be one job: the whole Djinni text is inside DOU's.
+- **Next:** stage 11 (deploy to the VPS).
 
 ## Phase A: Start accumulating data
 
@@ -167,18 +169,23 @@ Decisions (2026-11-15):
 ### Stage 10: Second source
 - [x] Written consent from DOU recorded in `docs/sources.md` (request to `legal@dou.ua`)
 - [x] Adapter for the second allowed source (DOU once consented, per `docs/sources.md`) + its fixtures (done early, in stage 3)
-- [ ] Cross-source dedup verified on real data
+- [x] Cross-source dedup verified on real data (433 labelled pairs, containment across sources; `docs/deduplication.md`)
+
+Decisions (2026-11-15):
+- **Verified on a copy of the backup, not live.** Precision and recall come from hand labels of every Djinni × DOU pair whose texts share at least 0.5 (Jaccard) or 0.75 of the shorter one (containment). The real `normalize_pending` and `assign_clusters` give the same clusters on a copy of the backup (`check`). A job posted on both sites giving one cluster and one Telegram message is part of the stage 11 smoke check.
+- **Containment across sources only.** Two descriptions from different sources are also the same job when 90% of the shorter one's shingles are in the other (`CROSS_SOURCE_CONTAINMENT`), because one site often wraps the same text in a company introduction or benefits. Within one source only Jaccard 0.85 counts: the labels cover pairs across sources only. The margin is thin: two roles of one company template reach 0.83 and are kept apart only by their titles, and Djinni's feed has no company or places to veto with. A minimum text size for containment (100 shingles) would cost 2 of 28 pairs and stop nothing seen, so it is held back until a wrong merge turns up. The author chose it over Jaccard 0.75 across sources (13 more pairs instead of 26), and decided the three unsure pairs it turned on (Sigma Software, SKELAR, Applyft: one job each).
+- **The vetoes and the title rule stay.** They miss 26 duplicate pairs (synonyms and translations of titles, a level named on one site only), but keep apart 51 pairs of different roles of one company that share their text.
 
 ### Stage 11: Deploy to VPS
 - [ ] Production Compose file + Caddy (HTTPS)
 - [ ] VPS setup: Docker, firewall, non-root user; Postgres and Redis not exposed, Redis password
 - [ ] Nightly `pg_dump` backup + tested restore
 - [ ] GitHub Actions deploy over SSH, secrets in GH Secrets
-- [ ] Migrate data from the free Postgres (`pg_dump` → `pg_restore`), disable the cron workflow
+- [ ] Migrate data from the free Postgres (`pg_dump` → `pg_restore`), disable the cron workflow. Neon's schema dump carries `pg_attver` column options a plain Postgres rejects: build the schema with migrations and restore data only (as `scripts/dedup_sample.py check` does)
 - [ ] Delete the cron-job.org job and revoke its token
 - [ ] Rate-limit sign-in, sign-up and the public search (Redis token bucket), CSP and HSTS in Caddy
 - [ ] Postgres tuned for SSD: `random_page_cost = 1.1`, so a common word uses the search index (`docs/search.md`, Measurements)
-- [ ] Smoke check after deploy
+- [ ] Smoke check after deploy, including one job posted on Djinni and DOU: one cluster, one Telegram message
 
 ### Stage 12: Polish
 - [ ] README: architecture diagram, screenshots, quickstart, decisions and trade-offs
