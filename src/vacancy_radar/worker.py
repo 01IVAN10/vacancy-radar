@@ -12,7 +12,7 @@ from typing import Any
 
 from celery import Celery, signals
 
-from vacancy_radar.config import get_settings
+from vacancy_radar.config import check_production, get_settings
 from vacancy_radar.log import configure_logging
 from vacancy_radar.sources import ADAPTERS, SourceAdapter
 
@@ -79,8 +79,14 @@ def build_beat_schedule(adapters: Iterable[SourceAdapter]) -> dict[str, dict[str
 
 
 def create_celery() -> Celery:
-    """Build the Celery app with Redis as both broker and result backend."""
-    redis_url = get_settings().redis_url
+    """Build the Celery app with Redis as both broker and result backend.
+
+    Fails at once without `REDIS_URL`, and in production with settings meant
+    for local development (`check_production`): the worker sends the links.
+    """
+    settings = get_settings()
+    check_production(settings)
+    redis_url = settings.redis_url
     if redis_url is None:
         raise RuntimeError("REDIS_URL is required for the Celery worker and Beat")
     app = Celery(

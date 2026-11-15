@@ -106,3 +106,14 @@ def test_a_start_failure_that_a_restart_may_fix_exits_with_1(
 
     assert bot_main.main() == 1
     assert polled == []
+
+
+def test_invalid_production_settings_stop_the_bot_for_good(
+    settings: pytest.MonkeyPatch, api: respx.MockRouter, polled: list[dict[str, Any]]
+) -> None:
+    settings.setenv("APP_ENV", "production")
+    settings.setenv("PUBLIC_BASE_URL", "http://radar.example")
+
+    # 0: a restart cannot fix `.env`.
+    assert bot_main.main() == 0
+    assert polled == []

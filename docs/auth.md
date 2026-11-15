@@ -23,7 +23,7 @@ A successful sign-up or sign-in sets `access_token`, a JWT signed with HS256 and
 | Lifetime | 7 days, no refresh | The cookie's `Max-Age` matches it |
 | `HttpOnly` | yes | Scripts on the page cannot read the token |
 | `SameSite` | `Lax` | Browsers leave the cookie off cross-site POSTs |
-| `Secure` | in production (`APP_ENV=production`) | Local development runs on plain HTTP |
+| `Secure` | when `PUBLIC_BASE_URL` is https, which production requires | Local development runs on plain HTTP |
 
 `CurrentUserMiddleware` (`api/middleware.py`) decodes the token and loads the account once per request, before any route runs, and keeps it in `request.state.user`. Routes get it through `OptionalUser` or `CurrentUser`, and templates through the page context. Every response therefore shows the right navigation, error pages included, and a new page cannot forget to look the user up. A missing, expired or forged token, or one for a deleted account, means the visitor is signed out. A request without the cookie does not touch the database.
 
