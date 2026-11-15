@@ -126,6 +126,10 @@
    "label": "same",
    "note": "PHP Engineer vs PHP Developer"
   },
+  "djinni:840539|dou:379189": {
+   "label": "different",
+   "note": "Brand Presence Specialist vs Talent Sourcer: shared company text"
+  },
   "djinni:840848|dou:368443": {
    "label": "same",
    "note": "one text; one title adds words to the other"
@@ -197,6 +201,10 @@
   "djinni:851699|dou:375612": {
    "label": "different",
    "note": "Middle/Senior, 2+ years vs Senior/Lead, 4+ years and team lead duties"
+  },
+  "djinni:851784|dou:379620": {
+   "label": "different",
+   "note": "Product Designer vs Data Engineer: shared company text"
   },
   "djinni:851784|dou:379735": {
    "label": "different",
@@ -450,6 +458,10 @@
    "label": "different",
    "note": "NVEX: Djinni's text is the Freelance role, not Middle AI"
   },
+  "djinni:857414|dou:379575": {
+   "label": "different",
+   "note": "Junior Compliance Specialist vs Creative Marketing Manager: shared company text"
+  },
   "djinni:857429|dou:379726": {
    "label": "different",
    "note": "Senior Product Manager vs Head of Product, 3+ vs 5+ years"
@@ -601,6 +613,10 @@
   "djinni:857876|dou:375686": {
    "label": "different",
    "note": "HOLYWATER: My Drama vs R&D"
+  },
+  "djinni:857876|dou:379620": {
+   "label": "different",
+   "note": "Product Designer vs Data Engineer: shared company text"
   },
   "djinni:857876|dou:379735": {
    "label": "same",

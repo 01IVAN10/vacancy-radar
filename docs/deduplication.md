@@ -79,29 +79,31 @@ Data: the Neon backup of 2026-11-15, 4439 raw items (Djinni 2768, DOU 1671) coll
 
 The measurements above checked by hand only the clusters whose titles differ. That tells how often a merge is wrong, but not how many duplicates the rule misses. This check labels both sides (`scripts/dedup_sample.py audit`, labels in `scripts/dedup_labels.json`):
 
-- **Which pairs.** Every pair of a Djinni and a DOU vacancy whose descriptions share at least 0.5 of all their shingles (Jaccard) or at least 0.75 of the shorter one's (containment), whatever the rule says about them: 429 pairs. Postings whose text was rewritten further are not in it, so the recall below is an upper bound.
-- **Labels.** A pair is `same` when it is one opening: one employer, one role, the same level and place. It is `different` when the texts name another role, level, team, product or country, and `unsure` when the two postings do not tell. 256 pairs that the rule joins have the same title words and texts sharing at least 85%; they count as the same job without a label. The other 173 were labelled by reading both descriptions. The author decided three pairs that turn on how much one site may add to a text (Sigma Software's Middle DevOps Engineer, SKELAR's Product Manager, Applyft's PPC Specialist). That moved SKELAR's Product Manager, a "different jobs" pair of the 2026-11-09 fixture, to the same job: the whole Djinni text is inside DOU's.
+- **Which pairs.** Every pair of a Djinni and a DOU vacancy whose descriptions share at least 0.5 of all their shingles (Jaccard) or at least 0.75 of the shorter one's (containment), whatever the rule says about them: 433 pairs. Pairs are found by prefix filtering, which loses none, however common the shingles a pair shares (`measure` looks only through rare shingles). Postings whose text was rewritten further are not in it, so the recall below is an upper bound.
+- **Labels.** A pair is `same` when it is one opening: one employer, one role, the same level and place. It is `different` when the texts name another role, level, team, product or country, and `unsure` when the two postings do not tell. A hand label always wins. A pair without one counts as the same job only when the rule joins it with the same title words and texts sharing at least 85% ("plain"): 256 pairs. The other 177 were labelled by reading both descriptions. The author decided three pairs that turn on how much one site may add to a text (Sigma Software's Middle DevOps Engineer, SKELAR's Product Manager, Applyft's PPC Specialist). That moved SKELAR's Product Manager, a "different jobs" pair of the 2026-11-09 fixture, to the same job: the whole Djinni text is inside DOU's.
 
-| Pairs | All | same | different | unsure |
-|---|---|---|---|---|
-| joined by the rule | 301 | 301 (256 without a label) | 0 | 0 |
-| apart: text below 85% | 44 | 40 | 1 | 3 |
-| apart: title | 44 | 15 | 24 | 5 |
-| apart: level | 36 | 11 | 23 | 2 |
-| apart: salary | 2 | 1 | 1 | 0 |
-| apart: arrival order | 2 | 2 | 0 | 0 |
+The rows are named as `audit` prints them: `together` is joined by the rule; the others are kept apart by that rule of `same_job`, or by `linkage` when the rule calls them the same job but one joined a cluster the other does not fit ([Arrival order](#measurements)).
 
-- **Precision.** No wrong merge among the 301 joined pairs.
+| Outcome | All | same | different | unsure | plain, no label |
+|---|---|---|---|---|---|
+| together | 301 | 45 | 0 | 0 | 256 |
+| text | 44 | 40 | 1 | 3 | 0 |
+| title | 47 | 15 | 27 | 5 | 0 |
+| seniority | 37 | 11 | 24 | 2 | 0 |
+| salary | 2 | 1 | 1 | 0 | 0 |
+| linkage | 2 | 2 | 0 | 0 | 0 |
+
+- **Precision.** No wrong merge among the 45 joined pairs labelled by hand. The other 256 count as the same job by the plain criterion, which is close to the rule itself; a review of them found none ambiguous.
 - **Recall.** 301 of the 370 pairs labelled the same job are joined (81%). The 10 unsure pairs count on neither side.
 - **Overlap.** 295 of 1670 DOU jobs (18%) are posted on Djinni too.
 
 Why the other 69 are missed:
 
-- **Text (40).** In most of them one site adds to the same text: DOU puts a company introduction, a benefits list or application questions around the text Djinni shows, or the other way round. Jaccard divides the shared shingles by all the shingles of both texts, so an added block lowers it. Artellence's "AI Automation Engineer" has the whole Djinni text inside DOU's (containment 1.00) and a Jaccard of 0.25. The rest are texts edited between the sites.
-- **Title (15).** Synonyms and translations: "CTO" and "Chief Technology Officer", "PHP Engineer" and "PHP Developer", a Ukrainian title on one site and an English one on the other, a typo ("Enterpise"). Each kind has one or two pairs. The 24 different jobs the title rule keeps apart are mostly roles of one company that share their text: GR8 Tech's CRM and Payments teams, Tieto's Telco and Service Desk engineers, DOIT Software's two AI/ML roles. A looser title rule would merge those.
-- **Level (11).** One site names a level the other leaves out ("Creative Marketing Manager" and "Senior Creative Marketing Manager", text 1.00), or "СТО" written in Cyrillic is not read as a level. The 23 different jobs this veto keeps apart include Tieto's Junior and non-Junior engineers with one text (1+ against 3+ years), so the veto stays.
-- **Arrival order (2).** The two cases of [Arrival order](#measurements).
-- **Salary (1).** "$100" in a Djinni description is read as its salary.
+- **text (40).** In most of them one site adds to the same text: DOU puts a company introduction, a benefits list or application questions around the text Djinni shows, or the other way round. Jaccard divides the shared shingles by all the shingles of both texts, so an added block lowers it. Artellence's "AI Automation Engineer" has the whole Djinni text inside DOU's (containment 1.00) and a Jaccard of 0.25. The rest are texts edited between the sites.
+- **title (15).** Synonyms and translations: "CTO" and "Chief Technology Officer", "PHP Engineer" and "PHP Developer", a Ukrainian title on one site and an English one on the other, a typo ("Enterpise"). Each kind has one or two pairs. The 27 different jobs the title rule keeps apart are mostly roles of one company that share their text: GR8 Tech's CRM and Payments teams, Tieto's Telco and Service Desk engineers, DOIT Software's two AI/ML roles. A looser title rule would merge those.
+- **seniority (11).** One site names a level the other leaves out ("Creative Marketing Manager" and "Senior Creative Marketing Manager", text 1.00), or "СТО" written in Cyrillic is not read as a level. The 24 different jobs this veto keeps apart include Tieto's Junior and non-Junior engineers with one text (1+ against 3+ years), so the veto stays.
+- **linkage (2).** The two cases of [Arrival order](#measurements).
+- **salary (1).** "$100" in a Djinni description is read as its salary.
 
 **The real code.** `check` on a copy of this backup gives the same 4077 clusters as `measure`, so the trigram search and the 30-day window lose no pair here either. Normalizing and clustering the 4439 items from scratch took about two minutes on a laptop. Since migration 0015 Neon's schema dump carries column options a plain Postgres rejects (`pg_attver`), so `check` builds the schema from migrations and loads only the backup's sources and raw items.
 
