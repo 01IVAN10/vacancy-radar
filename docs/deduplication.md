@@ -31,7 +31,7 @@ Two vacancies are the same job when no veto applies and both their titles and th
 - **One run at a time.** A run holds a transaction-level advisory lock (`db/locks.py`, `CLUSTER`) until it commits. A run that finds it taken changes nothing, logs `clusters.busy` and returns `Busy`; `notify.match` then matches what is clustered already.
 - **First seen first.** New vacancies are taken one at a time in the order their raw items were first seen, so the later half of a pair that arrives in the same run finds the earlier one, and the earlier one opens the cluster.
 - **Candidates.** A new vacancy is compared only with the clusters of vacancies whose titles share enough trigrams with its own (`title % :title`, pg_trgm's default threshold of 0.3, GIN index `ix_vacancy_title_trgm`) and that were first seen within 30 days of it (`CANDIDATE_WINDOW`). Then `pick_cluster` compares it with every member of those clusters. A run reads each vacancy's facts once. Every duplicate pair of the test sample ends up in one cluster through this search (`test_every_duplicate_pair_of_the_sample_shares_a_cluster`).
-- **The 30-day window is an assumption.** The longest gap between two postings of one job grows with the sample: 91 hours in the four days to 2026-11-09, 159 hours (6.6 days) in the seven days to 2026-11-12. So it says more about the samples than about how sites repost, and the window stays an assumption until a month of data can be measured (stage 11, on the VPS). A posting further from its twin opens a cluster of its own and is sent again, as a new job.
+- **The 30-day window is an assumption.** The longest gap between two postings of one job grows with the sample: 91 hours in the four days to 2026-11-09, 159 hours (6.6 days) in the seven days to 2026-11-12, 194 hours (8.1 days) in the ten days to 2026-11-15. So it says more about the samples than about how sites repost, and the window stays an assumption until a month of data can be measured (stage 11, on the VPS). A posting further from its twin opens a cluster of its own and is sent again, as a new job.
 - **First sighting.** A cluster's `first_seen_at` is the earliest first sighting of its members, and it is when the job appeared for matching (`docs/telegram.md`): a subscription that started later than that never gets the job, whichever of its postings arrives. A vacancy that joins a newer cluster can still match a subscription the earlier postings did not, on its own facts (any vacancy of a cluster matches it), but the account's delivery for the cluster is unique, so nothing is sent twice. A vacancy first seen earlier than its cluster, normalized late, moves the cluster's first sighting back, which can put the job before a subscription's start; by the same rule, that job is not news to it.
 
 ## Measurements
@@ -73,6 +73,38 @@ Data: the Neon backup of 2026-11-13, 3814 raw items (Djinni 2424, DOU 1390) coll
 - **Later postings.** 283 vacancies joined a cluster after its first posting, 52 of them more than 2 days later (40 from the other site, 13 of those with another work format). That is why matching counts its lookback from each vacancy, not from its cluster (`docs/telegram.md`). The longest gap is 159 hours (see [How it runs](#how-it-runs), the 30-day window).
 - **Places.** 67 distinct places, none of them a format or abroad flag.
 
+### Checked across sources on 2026-11-15
+
+Data: the Neon backup of 2026-11-15, 4439 raw items (Djinni 2768, DOU 1671) collected 2026-11-05 to 2026-11-15. `measure` gives 4077 clusters, and 347 of them hold more than one vacancy: 295 join Djinni and DOU, 52 are Djinni reposts. 583 pairs share at least 85% of their text, and the rule calls 381 of them the same job.
+
+The measurements above checked by hand only the clusters whose titles differ. That tells how often a merge is wrong, but not how many duplicates the rule misses. This check labels both sides (`scripts/dedup_sample.py audit`, labels in `scripts/dedup_labels.json`):
+
+- **Which pairs.** Every pair of a Djinni and a DOU vacancy whose descriptions share at least 0.5 of all their shingles (Jaccard) or at least 0.75 of the shorter one's (containment), whatever the rule says about them: 429 pairs. Postings whose text was rewritten further are not in it, so the recall below is an upper bound.
+- **Labels.** A pair is `same` when it is one opening: one employer, one role, the same level and place. It is `different` when the texts name another role, level, team, product or country, and `unsure` when the two postings do not tell. 256 pairs that the rule joins have the same title words and texts sharing at least 85%; they count as the same job without a label. The other 173 were labelled by reading both descriptions. The author decided three pairs that turn on how much one site may add to a text (Sigma Software's Middle DevOps Engineer, SKELAR's Product Manager, Applyft's PPC Specialist). That moved SKELAR's Product Manager, a "different jobs" pair of the 2026-11-09 fixture, to the same job: the whole Djinni text is inside DOU's.
+
+| Pairs | All | same | different | unsure |
+|---|---|---|---|---|
+| joined by the rule | 301 | 301 (256 without a label) | 0 | 0 |
+| apart: text below 85% | 44 | 40 | 1 | 3 |
+| apart: title | 44 | 15 | 24 | 5 |
+| apart: level | 36 | 11 | 23 | 2 |
+| apart: salary | 2 | 1 | 1 | 0 |
+| apart: arrival order | 2 | 2 | 0 | 0 |
+
+- **Precision.** No wrong merge among the 301 joined pairs.
+- **Recall.** 301 of the 370 pairs labelled the same job are joined (81%). The 10 unsure pairs count on neither side.
+- **Overlap.** 295 of 1670 DOU jobs (18%) are posted on Djinni too.
+
+Why the other 69 are missed:
+
+- **Text (40).** In most of them one site adds to the same text: DOU puts a company introduction, a benefits list or application questions around the text Djinni shows, or the other way round. Jaccard divides the shared shingles by all the shingles of both texts, so an added block lowers it. Artellence's "AI Automation Engineer" has the whole Djinni text inside DOU's (containment 1.00) and a Jaccard of 0.25. The rest are texts edited between the sites.
+- **Title (15).** Synonyms and translations: "CTO" and "Chief Technology Officer", "PHP Engineer" and "PHP Developer", a Ukrainian title on one site and an English one on the other, a typo ("Enterpise"). Each kind has one or two pairs. The 24 different jobs the title rule keeps apart are mostly roles of one company that share their text: GR8 Tech's CRM and Payments teams, Tieto's Telco and Service Desk engineers, DOIT Software's two AI/ML roles. A looser title rule would merge those.
+- **Level (11).** One site names a level the other leaves out ("Creative Marketing Manager" and "Senior Creative Marketing Manager", text 1.00), or "СТО" written in Cyrillic is not read as a level. The 23 different jobs this veto keeps apart include Tieto's Junior and non-Junior engineers with one text (1+ against 3+ years), so the veto stays.
+- **Arrival order (2).** The two cases of [Arrival order](#measurements).
+- **Salary (1).** "$100" in a Djinni description is read as its salary.
+
+**The real code.** `check` on a copy of this backup gives the same 4077 clusters as `measure`, so the trigram search and the 30-day window lose no pair here either. Normalizing and clustering the 4439 items from scratch took about two minutes on a laptop. Since migration 0015 Neon's schema dump carries column options a plain Postgres rejects (`pg_attver`), so `check` builds the schema from migrations and loads only the backup's sources and raw items.
+
 ## Why not something else
 
 - **An exact fingerprint of company + title + city** (the original plan) finds nothing: Djinni's feed has no company and no places, and DOU did not repost a vacancy with the same company and title in the sample.
@@ -92,9 +124,10 @@ Each vacancy keeps its feed title, which public pages show anyway, and the test 
 | Task | Command |
 |---|---|
 | Measure the rule (every number on this page) | `uv run python scripts/dedup_sample.py measure BACKUP.dump` |
+| Check the rule across sources against hand labels | `uv run python scripts/dedup_sample.py audit BACKUP.dump` |
 | Check that the real cluster assignment gives the same clusters | `uv run python scripts/dedup_sample.py check BACKUP.dump postgresql+psycopg://…/vacancy_radar_dedup_check` |
 | Rebuild the test fixture | `uv run python scripts/dedup_sample.py fixture BACKUP.dump tests/fixtures/dedup/pairs.json` |
 
-`measure` compares every vacancy with every cluster in memory, without the trigram search and the time window of `assign_clusters`. `check` closes that gap: it restores the backup into an empty database whose name ends in `_check` (create it first, e.g. `docker compose exec postgres createdb -U vacancy_radar vacancy_radar_dedup_check`, and drop it after), migrates it, runs `normalize_pending` and `assign_clusters`, and exits 1 if their clusters differ from the in-memory ones. On the 2026-11-09 backup they are the same, and the run took about 40 seconds with normalization.
+`measure` compares every vacancy with every cluster in memory, without the trigram search and the time window of `assign_clusters`. `check` closes that gap: it migrates an empty database whose name ends in `_check` (create it first, e.g. `docker compose exec postgres createdb -U vacancy_radar vacancy_radar_dedup_check`, and drop it after), loads the backup's sources and raw items into it, runs `normalize_pending` and `assign_clusters`, and exits 1 if their clusters differ from the in-memory ones. On the 2026-11-09 backup they are the same, and the run took about 40 seconds with normalization.
 
 `pg_restore` must be version 16 or newer; set `PG_RESTORE` if it is not on PATH (Homebrew's `postgresql@16` is keg-only). The fixture command checks every pair's verdict, both from the full vacancies and from the feed titles the test sees, and stops if one is not what `PAIRS` in the script expects. A rebuild uses a new key, so the whole file changes.

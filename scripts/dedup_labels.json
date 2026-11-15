@@ -1,0 +1,698 @@
+{
+ "backup": "Neon backup of 2026-11-15",
+ "labelled_on": "2026-11-15",
+ "pairs": {
+  "djinni:632297|dou:324461": {
+   "label": "unsure",
+   "note": "Tamga treasurer, text rewritten"
+  },
+  "djinni:717922|dou:376257": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:723165|dou:311967": {
+   "label": "same",
+   "note": "Head of IT department vs Head of IT, intro rewritten"
+  },
+  "djinni:723166|dou:324464": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:731058|dou:307743": {
+   "label": "same",
+   "note": "intro and benefits rewritten"
+  },
+  "djinni:735796|dou:307742": {
+   "label": "same",
+   "note": "DevOps/Server Engineer vs DevOps Engineer м. Дніпро"
+  },
+  "djinni:772475|dou:379914": {
+   "label": "same",
+   "note": "hours edited, DOU adds benefits"
+  },
+  "djinni:781553|dou:272618": {
+   "label": "same",
+   "note": "requirements reordered"
+  },
+  "djinni:784175|dou:333285": {
+   "label": "same",
+   "note": "the title translated"
+  },
+  "djinni:788067|dou:379908": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:795259|dou:379914": {
+   "label": "same",
+   "note": "one text; DOU decorates the title, the hours are edited"
+  },
+  "djinni:804680|dou:335363": {
+   "label": "unsure",
+   "note": "NORDA: copters and planes vs planes only"
+  },
+  "djinni:815774|dou:374764": {
+   "label": "same",
+   "note": "arrival order: the DOU posting joined Djinni's other title first"
+  },
+  "djinni:820486|dou:379221": {
+   "label": "different",
+   "note": "agency texts: Інженер-конструктор vs Lead Design Engineer"
+  },
+  "djinni:820952|dou:379231": {
+   "label": "same",
+   "note": "DOU adds the company intro"
+  },
+  "djinni:823671|dou:360196": {
+   "label": "same",
+   "note": "one text, reformatted"
+  },
+  "djinni:827490|dou:375764": {
+   "label": "unsure",
+   "note": "agency Eleven: two Djinni Hardware Engineer postings, one on DOU"
+  },
+  "djinni:828785|dou:379567": {
+   "label": "different",
+   "note": "Lead with a team vs Embedded Software Engineer"
+  },
+  "djinni:829175|dou:360555": {
+   "label": "same",
+   "note": "benefits rewritten"
+  },
+  "djinni:829886|dou:379449": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:830321|dou:253155": {
+   "label": "same",
+   "note": "DOU adds how to apply"
+  },
+  "djinni:830748|dou:379231": {
+   "label": "different",
+   "note": "Business analyst vs Product manager on one company template"
+  },
+  "djinni:832294|dou:355483": {
+   "label": "different",
+   "note": "Middle vs Junior Test Engineer"
+  },
+  "djinni:832313|dou:379740": {
+   "label": "unsure",
+   "note": "Jabil network engineer, text rewritten"
+  },
+  "djinni:837462|dou:366014": {
+   "label": "same",
+   "note": "6037 Shopify developer, intro rewritten"
+  },
+  "djinni:837462|dou:370835": {
+   "label": "different",
+   "note": "Shopify developer vs Product Designer"
+  },
+  "djinni:837733|dou:379575": {
+   "label": "different",
+   "note": "Head of Analytics vs Creative Marketing Manager: shared company text"
+  },
+  "djinni:838379|dou:364053": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:838381|dou:375386": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:838939|dou:345354": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:839749|dou:367496": {
+   "label": "same",
+   "note": "PHP Engineer vs PHP Developer"
+  },
+  "djinni:840848|dou:368443": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:841715|dou:369037": {
+   "label": "different",
+   "note": "Polish vs German"
+  },
+  "djinni:842849|dou:370338": {
+   "label": "different",
+   "note": "Panem: Middle vs Strong Junior PPC Specialist"
+  },
+  "djinni:843655|dou:370223": {
+   "label": "same",
+   "note": "Finance Manager vs FP&A Manager, one text"
+  },
+  "djinni:844234|dou:374137": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:844989|dou:379369": {
+   "label": "different",
+   "note": "QA Embedded vs Embedded Test Engineer (Senior / Middle), other requirements"
+  },
+  "djinni:844989|dou:379371": {
+   "label": "different",
+   "note": "QA Embedded vs Embedded Test Engineer (Junior)"
+  },
+  "djinni:845468|dou:368677": {
+   "label": "same",
+   "note": "one text; DOU adds Senior"
+  },
+  "djinni:845578|dou:371410": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:845900|dou:374481": {
+   "label": "different",
+   "note": "B2B Sales Manager vs Team Lead PPC: shared company text"
+  },
+  "djinni:846300|dou:379564": {
+   "label": "same",
+   "note": "DOU adds 'or middle' and the company intro"
+  },
+  "djinni:846677|dou:379426": {
+   "label": "same",
+   "note": "Full Stack vs Node js in the brackets, one text"
+  },
+  "djinni:846853|dou:372242": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:848403|dou:370338": {
+   "label": "same",
+   "note": "the Strong Junior opening rewritten"
+  },
+  "djinni:850599|dou:374891": {
+   "label": "same",
+   "note": "one text; the brackets differ"
+  },
+  "djinni:850898|dou:379563": {
+   "label": "same",
+   "note": "DOU adds the company intro"
+  },
+  "djinni:851612|dou:379267": {
+   "label": "same",
+   "note": "one text; DOU drops Senior from the title and adds benefits"
+  },
+  "djinni:851699|dou:375612": {
+   "label": "different",
+   "note": "Middle/Senior, 2+ years vs Senior/Lead, 4+ years and team lead duties"
+  },
+  "djinni:851784|dou:379735": {
+   "label": "different",
+   "note": "HOLYWATER: R&D vs My Drama"
+  },
+  "djinni:852621|dou:376222": {
+   "label": "same",
+   "note": "a typo: Enterpise"
+  },
+  "djinni:852668|dou:375783": {
+   "label": "same",
+   "note": "one text; DOU adds Lead to Senior"
+  },
+  "djinni:852675|dou:322111": {
+   "label": "different",
+   "note": "Lead with team duties vs Linux Software Engineer"
+  },
+  "djinni:852751|dou:376301": {
+   "label": "same",
+   "note": "requirements reordered, benefits rewritten"
+  },
+  "djinni:852761|dou:379741": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:852776|dou:365078": {
+   "label": "same",
+   "note": "company intro rewritten"
+  },
+  "djinni:852779|dou:373373": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:852785|dou:268627": {
+   "label": "same",
+   "note": "company intro rewritten"
+  },
+  "djinni:852796|dou:379669": {
+   "label": "same",
+   "note": "DOU adds the agency intro"
+  },
+  "djinni:852819|dou:379388": {
+   "label": "same",
+   "note": "Djinni adds why to join"
+  },
+  "djinni:853160|dou:379575": {
+   "label": "different",
+   "note": "Media Buyer vs Creative Marketing Manager"
+  },
+  "djinni:853483|dou:379274": {
+   "label": "different",
+   "note": "Billing Manager vs Payment Analyst"
+  },
+  "djinni:854334|dou:376178": {
+   "label": "same",
+   "note": "one text; Djinni's salary of $100 is misread from the description"
+  },
+  "djinni:854374|dou:371891": {
+   "label": "same",
+   "note": "Commercial Finance Lead vs Commercial FP&A Lead, one text"
+  },
+  "djinni:854459|dou:379134": {
+   "label": "different",
+   "note": "Upwork vs IT Sales Manager, 2+ vs 1+ years (fixture)"
+  },
+  "djinni:855032|dou:379395": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:855219|dou:375764": {
+   "label": "unsure",
+   "note": "agency Eleven: two Djinni Hardware Engineer postings, one on DOU"
+  },
+  "djinni:855222|dou:372018": {
+   "label": "unsure",
+   "note": "agency Eleven: RF Engineer, intro rewritten"
+  },
+  "djinni:855867|dou:375961": {
+   "label": "same",
+   "note": "client intro rewritten"
+  },
+  "djinni:856308|dou:379481": {
+   "label": "same",
+   "note": "the whole Djinni text is inside DOU's, which adds an intro (decided by the author)"
+  },
+  "djinni:856887|dou:379056": {
+   "label": "same",
+   "note": "DOU adds the company intro and benefits; same salary"
+  },
+  "djinni:856907|dou:379167": {
+   "label": "same",
+   "note": "DOU adds the bank intro and benefits"
+  },
+  "djinni:856914|dou:379430": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:856918|dou:379077": {
+   "label": "same",
+   "note": "Events and Marketing vs Event&Marketing (known miss)"
+  },
+  "djinni:856942|dou:379090": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:856976|dou:379105": {
+   "label": "different",
+   "note": "Tieto: Service Desk vs Junior Telco"
+  },
+  "djinni:856976|dou:379107": {
+   "label": "different",
+   "note": "Tieto: Service Desk vs Telco"
+  },
+  "djinni:856976|dou:379108": {
+   "label": "different",
+   "note": "Tieto: Service Desk vs Junior Service Desk, 3+ vs 1+ years"
+  },
+  "djinni:856978|dou:379105": {
+   "label": "different",
+   "note": "Tieto: Junior Service Desk vs Junior Telco"
+  },
+  "djinni:856978|dou:379107": {
+   "label": "different",
+   "note": "Tieto: Junior Service Desk vs Telco"
+  },
+  "djinni:856978|dou:379109": {
+   "label": "different",
+   "note": "Tieto: Junior Service Desk vs Service Desk, 1+ vs 3+ years"
+  },
+  "djinni:856979|dou:379105": {
+   "label": "different",
+   "note": "Tieto: Telco vs Junior Telco, 3+ vs 1+ years"
+  },
+  "djinni:856979|dou:379108": {
+   "label": "different",
+   "note": "Tieto: Telco vs Junior Service Desk"
+  },
+  "djinni:856979|dou:379109": {
+   "label": "different",
+   "note": "Tieto: Telco vs Service Desk"
+  },
+  "djinni:856981|dou:379107": {
+   "label": "different",
+   "note": "Tieto: Junior Telco vs Telco, 1+ vs 3+ years"
+  },
+  "djinni:856981|dou:379108": {
+   "label": "different",
+   "note": "Tieto: Junior Telco vs Junior Service Desk"
+  },
+  "djinni:856981|dou:379109": {
+   "label": "different",
+   "note": "Tieto: Junior Telco vs Service Desk"
+  },
+  "djinni:857010|dou:379281": {
+   "label": "different",
+   "note": "Customer Support vs L1 Technical Support (kept from the 2026-11-09 fixture)"
+  },
+  "djinni:857012|dou:379137": {
+   "label": "same",
+   "note": "CTO iGaming-платформи vs Chief Technology Officer (iGaming platform)"
+  },
+  "djinni:857041|dou:379894": {
+   "label": "different",
+   "note": "Romania vs Bulgaria"
+  },
+  "djinni:857068|dou:375784": {
+   "label": "same",
+   "note": "one text; DOU's title is generic"
+  },
+  "djinni:857086|dou:379085": {
+   "label": "unsure",
+   "note": "Information Security Manager vs Founding Information Security Lead, text rewritten"
+  },
+  "djinni:857119|dou:379212": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857145|dou:379224": {
+   "label": "different",
+   "note": "Senior vs Middle .NET Backend Developer"
+  },
+  "djinni:857180|dou:379245": {
+   "label": "same",
+   "note": "the Ukrainian name of a SOC Analyst"
+  },
+  "djinni:857197|dou:379265": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857202|dou:366430": {
+   "label": "unsure",
+   "note": "one text: Contract specialist vs Lawyer"
+  },
+  "djinni:857208|dou:379273": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857219|dou:379289": {
+   "label": "same",
+   "note": "one text; Djinni adds Middle"
+  },
+  "djinni:857219|dou:379860": {
+   "label": "same",
+   "note": "DOU reposted 379289 with more places and one more requirement"
+  },
+  "djinni:857239|dou:379091": {
+   "label": "same",
+   "note": "DOU adds the product list"
+  },
+  "djinni:857244|dou:379092": {
+   "label": "same",
+   "note": "DOU adds the company links"
+  },
+  "djinni:857256|dou:379318": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857273|dou:379313": {
+   "label": "same",
+   "note": "DOU adds the company intro (known miss)"
+  },
+  "djinni:857278|dou:379556": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857279|dou:379347": {
+   "label": "same",
+   "note": "the whole Djinni text is inside DOU's, which adds the SKELAR Platform paragraph (decided by the author)"
+  },
+  "djinni:857305|dou:375555": {
+   "label": "same",
+   "note": "DOU's text is inside Djinni's, which adds the product list and benefits (decided by the author)"
+  },
+  "djinni:857308|dou:379360": {
+   "label": "different",
+   "note": "Applyft: Performance Marketing vs Mental Health Unit, 1.5+ vs 1+ years"
+  },
+  "djinni:857327|dou:379390": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857327|dou:379620": {
+   "label": "different",
+   "note": "Full-Stack Developer vs Data Engineer: shared company text"
+  },
+  "djinni:857403|dou:368895": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857403|dou:379500": {
+   "label": "different",
+   "note": "NVEX: Djinni's text is the Freelance role, not Middle AI"
+  },
+  "djinni:857429|dou:379726": {
+   "label": "different",
+   "note": "Senior Product Manager vs Head of Product, 3+ vs 5+ years"
+  },
+  "djinni:857440|dou:379068": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857457|dou:379425": {
+   "label": "different",
+   "note": "Head of Product vs Senior Product Manager, 5+ vs 3+ years"
+  },
+  "djinni:857491|dou:379560": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857495|dou:379343": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857502|dou:375903": {
+   "label": "same",
+   "note": "benefits rewritten"
+  },
+  "djinni:857510|dou:379530": {
+   "label": "same",
+   "note": "arrival order: the Djinni posting joined DOU's other title first"
+  },
+  "djinni:857529|dou:371739": {
+   "label": "different",
+   "note": "Home Services vs Dating"
+  },
+  "djinni:857531|dou:379428": {
+   "label": "same",
+   "note": "company intro rewritten"
+  },
+  "djinni:857570|dou:379518": {
+   "label": "same",
+   "note": "Chief Technology Officer vs CTO"
+  },
+  "djinni:857579|dou:379524": {
+   "label": "different",
+   "note": "Content Engineer vs Content Creator: other title, salary and questions"
+  },
+  "djinni:857583|dou:379513": {
+   "label": "same",
+   "note": "Deputy CTO vs Заступник СТО: one text, a Cyrillic CTO is not read as a level"
+  },
+  "djinni:857595|dou:379544": {
+   "label": "same",
+   "note": "RAF is Risk & Anti-Fraud; Djinni adds Middle"
+  },
+  "djinni:857597|dou:379551": {
+   "label": "different",
+   "note": "GR8: CRM Team vs Payments Team"
+  },
+  "djinni:857599|dou:379549": {
+   "label": "different",
+   "note": "GR8: Payments Team vs CRM Team"
+  },
+  "djinni:857609|dou:379561": {
+   "label": "different",
+   "note": "DOIT: Python, LLM, RAG vs Classic ML and recommendations"
+  },
+  "djinni:857616|dou:376025": {
+   "label": "different",
+   "note": "DOIT: Classic ML and recommendations vs Python, LLM & RAG"
+  },
+  "djinni:857619|dou:379565": {
+   "label": "same",
+   "note": "text rewritten"
+  },
+  "djinni:857628|dou:379537": {
+   "label": "same",
+   "note": "DOU adds the company intro and benefits"
+  },
+  "djinni:857640|dou:379289": {
+   "label": "same",
+   "note": "one text; Djinni adds Middle"
+  },
+  "djinni:857640|dou:379860": {
+   "label": "same",
+   "note": "DOU reposted 379289 with more places and one more requirement"
+  },
+  "djinni:857653|dou:379257": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857672|dou:376025": {
+   "label": "different",
+   "note": "DOIT: Classic ML and recommendations vs Python, LLM & RAG"
+  },
+  "djinni:857723|dou:379598": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857727|dou:379440": {
+   "label": "same",
+   "note": "one text; Business Operations vs Middle Operations Manager"
+  },
+  "djinni:857742|dou:379492": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857746|dou:379493": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857761|dou:379662": {
+   "label": "same",
+   "note": "DOU adds the bank intro"
+  },
+  "djinni:857775|dou:375533": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857781|dou:362009": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857784|dou:379682": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857785|dou:379684": {
+   "label": "same",
+   "note": "DOU adds the company intro"
+  },
+  "djinni:857786|dou:379554": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857810|dou:379930": {
+   "label": "same",
+   "note": "DOU adds two application questions"
+  },
+  "djinni:857840|dou:379723": {
+   "label": "same",
+   "note": "sections reordered"
+  },
+  "djinni:857844|dou:379555": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857853|dou:115796": {
+   "label": "same",
+   "note": "Djinni adds a team intro"
+  },
+  "djinni:857876|dou:375686": {
+   "label": "different",
+   "note": "HOLYWATER: My Drama vs R&D"
+  },
+  "djinni:857876|dou:379735": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857894|dou:379661": {
+   "label": "same",
+   "note": "sections renamed, DOU adds a job description"
+  },
+  "djinni:857916|dou:379765": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857941|dou:379348": {
+   "label": "same",
+   "note": "DOU adds the company intro and an equal-opportunity note"
+  },
+  "djinni:857955|dou:379742": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:857959|dou:379813": {
+   "label": "same",
+   "note": "Corporate Councel vs Corporate Lawyer"
+  },
+  "djinni:857969|dou:379241": {
+   "label": "same",
+   "note": "responsibilities rewritten"
+  },
+  "djinni:857997|dou:372860": {
+   "label": "same",
+   "note": "a few requirements edited, DOU adds a note"
+  },
+  "djinni:858010|dou:379839": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:858026|dou:379750": {
+   "label": "different",
+   "note": "2nd line support vs system administrator"
+  },
+  "djinni:858027|dou:379588": {
+   "label": "same",
+   "note": "DOU adds the company name and benefits"
+  },
+  "djinni:858062|dou:379867": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:858073|dou:379077": {
+   "label": "same",
+   "note": "Djinni repost as Events Manager, same text"
+  },
+  "djinni:858092|dou:372662": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:858100|dou:379881": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:858109|dou:379903": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:858116|dou:290423": {
+   "label": "same",
+   "note": "one text; one title adds words to the other"
+  },
+  "djinni:858126|dou:379918": {
+   "label": "same",
+   "note": "DOU adds the company intro"
+  },
+  "djinni:858136|dou:379922": {
+   "label": "unsure",
+   "note": "Everstar: Technical Lead (UAV) vs (FPV & Interceptor)"
+  },
+  "djinni:858138|dou:379924": {
+   "label": "different",
+   "note": "Everstar: one Djinni UAV posting, three DOU directions"
+  },
+  "djinni:858138|dou:379925": {
+   "label": "different",
+   "note": "Everstar: one Djinni UAV posting, three DOU directions"
+  },
+  "djinni:858138|dou:379926": {
+   "label": "different",
+   "note": "Everstar: one Djinni UAV posting, three DOU directions"
+  },
+  "djinni:858176|dou:379354": {
+   "label": "unsure",
+   "note": "one text under unrelated titles: BDR (Prague) vs GTM Lead"
+  }
+ }
+}

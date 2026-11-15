@@ -1,6 +1,7 @@
 """Measure deduplication on a backup of the hosted database, check it, and rebuild its fixture.
 
     uv run python scripts/dedup_sample.py measure BACKUP.dump
+    uv run python scripts/dedup_sample.py audit BACKUP.dump [scripts/dedup_labels.json]
     uv run python scripts/dedup_sample.py check BACKUP.dump DATABASE_URL
     uv run python scripts/dedup_sample.py fixture BACKUP.dump tests/fixtures/dedup/pairs.json
 
@@ -11,11 +12,20 @@ Every item is normalized with the current parsers and clustered in first-seen
 order with `domain.dedup.pick_cluster`, in memory. `docs/deduplication.md`
 reports the output of `measure`.
 
+`audit` checks the rule across sources against hand labels. It takes every
+pair of vacancies from different sources whose texts are close by either
+measure (`AUDIT_JACCARD`, `AUDIT_CONTAINMENT`), whatever the rule says about
+them, and reads each one's label (`same`, `different` or `unsure`) from
+`dedup_labels.json`. A pair the rule joins with the same title words and
+texts sharing at least `TEXT_THRESHOLD` is not labelled by hand. It prints
+how many joined pairs are wrong, how many of the same jobs are joined, and
+why the rest are kept apart, and exits 1 while a pair has no label.
+
 `measure` compares every new vacancy with every cluster, so it does not go
 through the cluster assignment's trigram search and time window. `check`
-closes that gap: it restores the backup into an empty local database whose
-name ends in `_check`, migrates it, and runs the real `normalize_pending` and
-`assign_clusters` on it, then compares their clusters with the in-memory
+closes that gap: it migrates an empty local database whose name ends in
+`_check`, loads the backup's sources and raw items into it, and runs the real
+`normalize_pending` and `assign_clusters` on it, then compares their clusters with the in-memory
 ones and exits 1 if they differ. It writes only to that database, which the
 operator creates and drops. No command fetches anything from a source.
 
@@ -206,6 +216,16 @@ PAIRS: tuple[tuple[str, str, str, str, bool], ...] = (
 THRESHOLDS = (TEXT_THRESHOLD, 0.7, 0.5)
 # Random arrival orders to compare with first-seen order.
 SHUFFLES = 10
+# A shingle held by more vacancies than this is boilerplate, so it does not
+# make two vacancies a pair worth comparing.
+RARE_SHINGLE = 8
+# Pairs from different sources that `audit` labels by hand: texts that share
+# this much by Jaccard, or this much of the shorter text. Below both, no pair
+# in the samples so far was the same job.
+AUDIT_JACCARD = 0.5
+AUDIT_CONTAINMENT = 0.75
+AUDIT_LABELS = Path(__file__).with_name("dedup_labels.json")
+LABELS = ("same", "different", "unsure")
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +246,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("measure").add_argument("backup", type=Path)
+    audit_command = commands.add_parser("audit")
+    audit_command.add_argument("backup", type=Path)
+    audit_command.add_argument("labels", type=Path, nargs="?", default=AUDIT_LABELS)
     check_command = commands.add_parser("check")
     check_command.add_argument("backup", type=Path)
     check_command.add_argument("database_url", help="an empty database whose name ends in _check")
@@ -237,6 +260,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     items = load(args.backup)
     if args.command == "measure":
         measure(items)
+    elif args.command == "audit":
+        sys.exit(audit(items, args.labels))
     elif args.command == "check":
         sys.exit(check(args.backup, items, make_url(args.database_url)))
     else:
@@ -384,23 +409,34 @@ def late_members(items: list[Item], groups: Iterable[frozenset[str]]) -> None:
     )
 
 
-def similar_pairs(facts: dict[str, DedupFacts], threshold: float) -> list[tuple[str, str]]:
-    """Pairs whose texts share at least `threshold`, found through rare shingles."""
+def sharing_pairs(facts: dict[str, DedupFacts]) -> set[tuple[str, str]]:
+    """Pairs of vacancies that share at least one rare shingle, each sorted."""
     holders: defaultdict[int, list[str]] = defaultdict(list)
     for key, fact in facts.items():
         for shingle in fact.shingles:
             holders[shingle].append(key)
-    candidates = {
+    return {
         pair
         for keys in holders.values()
-        if len(keys) <= 8
+        if len(keys) <= RARE_SHINGLE
         for pair in combinations(sorted(keys), 2)
     }
+
+
+def similar_pairs(facts: dict[str, DedupFacts], threshold: float) -> list[tuple[str, str]]:
+    """Pairs whose texts share at least `threshold`, found through rare shingles."""
     return sorted(
         (a, b)
-        for a, b in candidates
+        for a, b in sharing_pairs(facts)
         if dedup.text_similarity(facts[a].shingles, facts[b].shingles) >= threshold
     )
+
+
+def containment(a: frozenset[int], b: frozenset[int]) -> float:
+    """The share of the smaller shingle set found in the other; 0.0 if either is too short."""
+    if len(a) < dedup.MIN_SHINGLES or len(b) < dedup.MIN_SHINGLES:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
 
 
 def clusters(
@@ -439,6 +475,114 @@ def describe(group: frozenset[str], items: list[Item], facts: dict[str, DedupFac
     return f"text {least:.2f}: {titles}"
 
 
+# --- audit ------------------------------------------------------------------------
+
+
+def audit(items: list[Item], labels_path: Path) -> int:
+    """Compare the clusters across sources with hand labels; 1 while a pair has no label."""
+    labels: dict[str, str] = {
+        key: entry["label"] for key, entry in json.loads(labels_path.read_text())["pairs"].items()
+    }
+    if unknown := {label for label in labels.values() if label not in LABELS}:
+        sys.exit(f"{labels_path}: unknown labels {sorted(unknown)}, expected one of {LABELS}")
+    by_key = {item.key: item for item in items}
+    facts = {item.key: facts_of(item) for item in items}
+    groups = clusters(items, facts)
+    cluster_of = {key: number for number, group in enumerate(groups) for key in group}
+
+    outcomes: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    missed: list[tuple[str, str, str]] = []
+    unlabelled: list[tuple[str, str]] = []
+    audited = audited_pairs(facts)
+    for a, b in audited:
+        outcome = pair_outcome(facts[a], facts[b], together=cluster_of[a] == cluster_of[b])
+        if outcome == "together" and plainly_same(facts[a], facts[b]):
+            outcomes[outcome]["same, not labelled"] += 1
+            continue
+        label = labels.get(f"{a}|{b}")
+        if label is None:
+            unlabelled.append((a, b))
+            continue
+        outcomes[outcome][label] += 1
+        if label == "same" and outcome != "together":
+            missed.append((outcome, a, b))
+
+    print(
+        f"pairs from different sources with texts sharing >= {AUDIT_JACCARD} (Jaccard) or "
+        f">= {AUDIT_CONTAINMENT} of the shorter one: {len(audited)}"
+    )
+    for outcome in sorted(outcomes, key=lambda o: (o != "together", o)):
+        print(
+            f"  {outcome if outcome == 'together' else 'apart by ' + outcome}: "
+            f"{dict(outcomes[outcome])}"
+        )
+    joined = outcomes["together"]
+    same_total = sum(counts["same"] + counts["same, not labelled"] for counts in outcomes.values())
+    same_joined = joined["same"] + joined["same, not labelled"]
+    print(
+        f"wrong merges: {joined['different']} of {joined.total()} joined pairs "
+        f"({joined['unsure']} unsure); same jobs joined: {same_joined} of {same_total}"
+    )
+    for source in sorted({item.source for item in items}):
+        with_source = [g for g in groups if any(key.startswith(f"{source}:") for key in g)]
+        shared = sum(len({key.split(":")[0] for key in g}) > 1 for g in with_source)
+        print(f"jobs on {source} also on another source: {shared} of {len(with_source)}")
+    for outcome, a, b in sorted(missed):
+        print(f"  missed ({outcome}): {describe_pair(a, b, by_key, facts)}")
+
+    stale = labels.keys() - {f"{a}|{b}" for a, b in audited}
+    if stale:
+        print(f"labels of pairs no longer audited (parsers changed?): {len(stale)}")
+    for a, b in unlabelled:
+        print(f"  no label: {describe_pair(a, b, by_key, facts)}")
+        print(f"    {by_key[a].payload.get('link')} {by_key[b].payload.get('link')}")
+    if unlabelled:
+        print(f"{len(unlabelled)} pairs need a label in {labels_path}")
+    return 1 if unlabelled else 0
+
+
+def audited_pairs(facts: dict[str, DedupFacts]) -> list[tuple[str, str]]:
+    """Pairs from different sources whose texts are close by either measure, each sorted."""
+    return sorted(
+        (a, b)
+        for a, b in sharing_pairs(facts)
+        if facts[a].source != facts[b].source
+        and (
+            dedup.text_similarity(facts[a].shingles, facts[b].shingles) >= AUDIT_JACCARD
+            or containment(facts[a].shingles, facts[b].shingles) >= AUDIT_CONTAINMENT
+        )
+    )
+
+
+def pair_outcome(a: DedupFacts, b: DedupFacts, *, together: bool) -> str:
+    """`together`, or why the pair is apart: a veto, the title, the text, or linkage."""
+    if together:
+        return "together"
+    comparison = same_job(a, b, threshold=0.0)
+    if isinstance(comparison, dedup.Different):
+        return comparison.reason
+    # The rule calls them the same job, but one joined a cluster the other does not fit.
+    return "linkage" if isinstance(same_job(a, b), Same) else "text"
+
+
+def plainly_same(a: DedupFacts, b: DedupFacts) -> bool:
+    """The same title words and texts sharing `TEXT_THRESHOLD`: no hand check needed."""
+    return (
+        a.title_words == b.title_words
+        and dedup.text_similarity(a.shingles, b.shingles) >= TEXT_THRESHOLD
+    )
+
+
+def describe_pair(a: str, b: str, by_key: dict[str, Item], facts: dict[str, DedupFacts]) -> str:
+    jaccard = dedup.text_similarity(facts[a].shingles, facts[b].shingles)
+    shared = containment(facts[a].shingles, facts[b].shingles)
+    company = by_key[a].vacancy.company or by_key[b].vacancy.company
+    return (
+        f"{a}|{b} Jaccard {jaccard:.2f} containment {shared:.2f} "
+        f"{by_key[a].vacancy.title!r} | {by_key[b].vacancy.title!r} ({company})"
+    )
+
+
 # --- check ------------------------------------------------------------------------
 
 
@@ -455,32 +599,38 @@ def check(backup: Path, items: list[Item], url: URL) -> int:
     if tables:
         sys.exit(f"{url.database} is not empty: create a new database for each check")
 
-    # Connection details as options and the password in the environment, so
-    # the password does not show in the process list.
-    subprocess.run(  # noqa: S603 - a local binary, a local file, no shell
-        [
-            pg_restore(),
-            "--no-owner",
-            "--no-privileges",
-            "--host",
-            url.host or "localhost",
-            "--port",
-            str(url.port or 5432),
-            "--username",
-            url.username or "",
-            "--dbname",
-            url.database or "",
-            str(backup),
-        ],
-        check=True,
-        env=os.environ | {"PGPASSWORD": url.password or ""},
-    )
     config = Config(str(ALEMBIC_INI))
     # configparser reads "%" as interpolation, so a password with one needs it doubled.
     config.set_main_option(
         "sqlalchemy.url", url.render_as_string(hide_password=False).replace("%", "%%")
     )
     command.upgrade(config, "head")
+    # Only the raw items: the schema comes from this checkout's migrations, and
+    # everything else is rebuilt from them. Neon's schema dump also carries
+    # column options a plain Postgres rejects (`pg_attver`). One table at a
+    # time, so `source` is in before the raw items that refer to it.
+    for table in ("source", "raw_vacancy"):
+        # Connection details as options and the password in the environment,
+        # so the password does not show in the process list.
+        subprocess.run(  # noqa: S603 - a local binary, a local file, no shell
+            [
+                pg_restore(),
+                "--data-only",
+                "--table",
+                table,
+                "--host",
+                url.host or "localhost",
+                "--port",
+                str(url.port or 5432),
+                "--username",
+                url.username or "",
+                "--dbname",
+                url.database or "",
+                str(backup),
+            ],
+            check=True,
+            env=os.environ | {"PGPASSWORD": url.password or ""},
+        )
 
     with Session(engine) as session:
         print(f"normalized: {normalize_pending(session)}")
