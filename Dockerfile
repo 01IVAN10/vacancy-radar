@@ -1,4 +1,5 @@
-# One image for api, worker and beat; they differ only in the command.
+# One image for the api, worker, beat, Telegram bot and one-shot migrate
+# services; they differ only in the command.
 
 # --- build: resolve dependencies with uv into /app/.venv ---------------------
 FROM ghcr.io/astral-sh/uv:0.13.7-python3.12-trixie-slim AS builder
@@ -20,13 +21,16 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
-# --- runtime: only the virtualenv, no build tools ----------------------------
+# --- runtime: the virtualenv and the migrations, no build tools --------------
 FROM python:3.12-slim-trixie AS runtime
 
 RUN groupadd --system app && useradd --system --gid app --no-create-home app
 
 WORKDIR /app
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
+# `alembic upgrade head` runs from /app, where alembic.ini finds migrations/.
+COPY --chown=app:app alembic.ini ./
+COPY --chown=app:app migrations ./migrations
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1

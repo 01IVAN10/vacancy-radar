@@ -71,6 +71,10 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Build image
         run: docker build --tag vacancy-radar:ci .
+      # `alembic heads` reads only the script directory, so it needs no database.
+      # It prints nothing and succeeds when versions/ is empty, hence the grep.
+      - name: Check that the migrations are in the image
+        run: docker run --rm --network none vacancy-radar:ci alembic heads | grep '(head)'
       - name: Smoke-test /health in the built image
         run: |
           docker run --detach --name api \

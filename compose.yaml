@@ -20,9 +20,29 @@ x-app: &app
       condition: service_healthy
     redis:
       condition: service_healthy
+    # The schema must be current before anything reads or writes the database.
+    migrate:
+      condition: service_completed_successfully
   restart: unless-stopped
 
 services:
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    # Replaces the anchor's depends_on, which lists this service itself.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # It runs once per `docker compose up` and exits; the anchor's policy would restart it.
+    restart: "no"
+    # The image's check calls the API's /health, which this service does not serve.
+    healthcheck:
+      disable: true
+    # New migrations apply without a rebuild. They do not import vacancy_radar,
+    # so the package installed in the image is enough.
+    volumes:
+      - ./migrations:/app/migrations:ro
+
   api:
     <<: *app
     command: ["uvicorn", "vacancy_radar.api.app:app", "--host", "0.0.0.0", "--port", "8000",
