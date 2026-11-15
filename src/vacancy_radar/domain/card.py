@@ -2,7 +2,7 @@
 
 A card has the title, the normalized fields and a link to the original
 posting, never the full description: public output links to the source
-instead of republishing it (CLAUDE.md, Legal data collection). Values are
+instead of republishing it (docs/sources.md, "Collection rules (all sources)"). Values are
 plain text; each output escapes them for its own format.
 """
 

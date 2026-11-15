@@ -38,7 +38,11 @@ class DouAdapter:
 
 
 def parse_feed(content: bytes) -> FetchResult:
-    """Turn the RSS document into raw items. Pure: no I/O."""
+    """Turn the RSS document into raw items.
+
+    No network or database access; skipped entries and a malformed feed are
+    logged.
+    """
     return parse_rss(content, source="dou", to_raw_item=to_raw_item)
 
 

@@ -1,4 +1,7 @@
-"""structlog setup shared by the CLI and, later, the API and workers."""
+"""structlog setup.
+
+Shared by every command-line entry point, the Telegram bot and the Celery worker.
+"""
 
 import logging
 import sys

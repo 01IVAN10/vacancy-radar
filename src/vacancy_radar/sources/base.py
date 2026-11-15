@@ -1,7 +1,7 @@
 """What every source adapter provides, independent of how it is scheduled.
 
 An adapter only fetches and parses. Storage lives in `vacancy_radar.collect`,
-so the CLI and (from stage 4) the Celery task share the same code path.
+so the CLI and the Celery task (`collect.tasks`) share the same code path.
 """
 
 from dataclasses import dataclass

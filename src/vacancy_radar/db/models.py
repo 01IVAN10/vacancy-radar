@@ -1,7 +1,7 @@
 """Tables for collected data and for the people who subscribe to it.
 
 `raw_vacancy` keeps every fetched item exactly as the source returned it, so
-the normalized tables of later stages can be rebuilt from it at any time.
+the normalized `vacancy` table can be rebuilt from it at any time.
 `collect_run` records every collection attempt, so gaps and missed items can
 be found with SQL instead of reading job logs. `exchange_rate` caches the
 official NBU rates that salaries are converted with.

@@ -1,7 +1,7 @@
 """The short excerpt of a description that a search result shows. Pure: no I/O.
 
 Results show a short excerpt of the description, never all of it
-(CLAUDE.md, Legal data collection): with words, a fragment Postgres's
+(docs/sources.md, "Collection rules (all sources)"): with words, a fragment Postgres's
 `ts_headline` picks around them (`db/fts.py:headline`); without words, the
 beginning (`excerpt`). `snippet_html` is the only place where vacancy text
 becomes HTML, and it escapes everything but its own highlights.

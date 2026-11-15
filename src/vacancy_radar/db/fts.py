@@ -35,7 +35,7 @@ from vacancy_radar.domain.snippet import HIGHLIGHT_START, HIGHLIGHT_STOP
 
 SEARCH_CONFIG: Final = "simple_unaccent"
 # One fragment of at most 30 words around the best match: a short excerpt,
-# not the description (CLAUDE.md, Legal data collection).
+# not the description (docs/sources.md, "Collection rules (all sources)").
 HEADLINE_OPTIONS: Final = (
     f"StartSel={HIGHLIGHT_START}, StopSel={HIGHLIGHT_STOP}, MaxWords=30, MinWords=12, ShortWord=2"
 )

@@ -32,7 +32,6 @@ from vacancy_radar.domain.seniority import LEVELS, Level
 from vacancy_radar.domain.work_format import WORK_FORMATS, WorkFormat
 
 MAX_NAME_LENGTH: Final = 80
-# Position of each skill in the dictionary, so skills are stored in its order.
 
 
 @dataclass(frozen=True, slots=True)
