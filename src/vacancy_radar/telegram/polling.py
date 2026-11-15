@@ -19,6 +19,7 @@ from typing import Final
 import structlog
 from sqlalchemy.orm import Session
 
+from vacancy_radar.backoff import exponential_backoff
 from vacancy_radar.telegram.bot import handle_update
 from vacancy_radar.telegram.client import (
     TelegramClient,
@@ -85,7 +86,7 @@ def poll_forever(
             raise
         except TelegramError as exc:
             failures += 1
-            delay = min(MAX_BACKOFF_SECONDS, 2 ** (failures - 1))
+            delay = exponential_backoff(failures - 1, base=1, cap=MAX_BACKOFF_SECONDS, jitter=False)
             if isinstance(exc, TelegramConflictError):
                 logger.error("telegram.poll_conflict", error=str(exc), retry_in=delay)
             elif exc.retryable:

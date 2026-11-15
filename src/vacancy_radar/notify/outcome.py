@@ -1,4 +1,6 @@
-"""What a failed send means for its delivery and for the run. Pure: no I/O.
+"""What a failed send means for its delivery and for the run.
+
+No I/O; a backoff delay is random within its bounds.
 
 `send_pending` claims a delivery, tries to send it, and on an exception asks
 `outcome_of` what to do. The whole policy is this one table:
@@ -23,8 +25,7 @@ each run therefore gives up one delivery before it stops.
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from celery.utils.time import get_exponential_backoff_interval
-
+from vacancy_radar.backoff import exponential_backoff
 from vacancy_radar.telegram.client import (
     TelegramApiError,
     TelegramError,
@@ -106,10 +107,7 @@ def backoff_seconds(attempts: int) -> int:
     """Delay after `attempts` failed attempts: full jitter below the doubling cap, at least 1 s."""
     return max(
         1,
-        get_exponential_backoff_interval(
-            factor=BACKOFF_FACTOR_SECONDS,
-            retries=attempts - 1,
-            maximum=BACKOFF_MAX_SECONDS,
-            full_jitter=True,
+        exponential_backoff(
+            attempts - 1, base=BACKOFF_FACTOR_SECONDS, cap=BACKOFF_MAX_SECONDS, jitter=True
         ),
     )
