@@ -2,7 +2,7 @@
 
 IT job aggregator with market analytics. It collects vacancies from public feeds, deduplicates and normalizes them, sends subscription matches to Telegram, and shows market analytics.
 
-Status: early development. See [`PLAN.md`](PLAN.md) for the roadmap and [`docs/sources.md`](docs/sources.md) for how each data source may be used.
+Status: stages 0–10 of [`PLAN.md`](PLAN.md) are done: collection from Djinni and DOU, normalization, accounts and subscriptions, Telegram delivery, deduplication across sources, search and analytics. Next is the deploy to a VPS (stage 11). [`docs/sources.md`](docs/sources.md) describes how each data source may be used.
 
 ## Quickstart
 
@@ -133,6 +133,7 @@ Compose sets `DISABLED_SOURCES=dou` for the worker. Until the VPS exists, DOU is
 
 ```text
 src/vacancy_radar/
+├── analytics/  # market analytics: materialized views of jobs by week and month, and reading them
 ├── api/        # FastAPI app, routes and Jinja2 templates
 ├── auth/       # password hashing, session tokens, CSRF tokens, registration and sign-in
 ├── clusters/   # deduplication: each new vacancy joins the cluster of the same job, or opens one
@@ -141,11 +142,14 @@ src/vacancy_radar/
 ├── domain/     # pure functions: parsing, normalization, matching, deduplication (no I/O)
 ├── exchange/   # NBU exchange rates, cached in exchange_rate
 ├── normalize/  # raw_vacancy → vacancy: the reprocessing CLI and the Celery task
+├── notify/     # matched vacancies sent to Telegram: matching, messages and delivery
+├── search/     # vacancy search for the site: full-text search and filters, one result per job
 ├── sources/    # one adapter per source (fetch + parse), behind SourceAdapter
 ├── subscriptions/  # storing each account's subscriptions, scoped to the owner
 ├── telegram/   # Bot API client, one-time link tokens, and the long-polling bot
 ├── config.py   # settings from environment / .env
 ├── log.py      # structlog setup
+├── ratelimit.py  # Redis token bucket per domain, shared by source adapters and the Telegram client
 └── worker.py   # Celery app for the worker and Beat
 migrations/     # Alembic migrations (the only way the schema changes)
 scripts/        # developer tools run by hand, e.g. measuring deduplication on a backup

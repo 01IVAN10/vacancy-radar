@@ -1,7 +1,7 @@
 """Collection: fetch a source and store its items in `raw_vacancy`.
 
 Run it with `python -m vacancy_radar.collect`. The functions here are plain
-code with no scheduler attached; the Celery task in stage 4 wraps them.
+code with no scheduler attached; the Celery task in `collect.tasks` wraps them.
 """
 
 from vacancy_radar.collect.service import (

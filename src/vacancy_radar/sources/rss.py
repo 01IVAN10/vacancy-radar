@@ -1,4 +1,7 @@
-"""Parsing shared by the RSS adapters. Pure: no I/O."""
+"""Parsing shared by the RSS adapters.
+
+No network or database access; skipped entries and a malformed feed are logged.
+"""
 
 from collections.abc import Callable, Mapping
 from typing import Any

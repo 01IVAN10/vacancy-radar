@@ -38,10 +38,11 @@ from vacancy_radar.domain.salary import Salary
 from vacancy_radar.domain.seniority import LEVELS, Level
 
 # How far apart two postings of one job may be first seen. An assumption, not
-# a measurement: the 2026-11-05..09 sample is four days long, and the longest
-# gap in it (91 hours) says more about the sample than about reposts. To be
-# measured again on a longer sample (PLAN.md, findings PR). A posting further
-# from its twin opens a cluster of its own and is sent again as a new job.
+# a measurement: the longest gap between two postings of one job grows with
+# the sample (194 hours in the ten days to 2026-11-15), so it is to be measured
+# on a month of data (docs/deduplication.md, "The 30-day window is an
+# assumption"). A posting further from its twin opens a cluster of its own and
+# is sent again as a new job.
 # Analytics uses it too: a job's facts can change for this long after it
 # first appeared (`domain/analytics.py`).
 CANDIDATE_WINDOW: Final = timedelta(days=30)

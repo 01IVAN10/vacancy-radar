@@ -1,6 +1,6 @@
 # Data sources
 
-Status of every source Vacancy Radar collects from, recorded before its adapter is written (see "Legal data collection" in `CLAUDE.md`). Order of preference: official API → RSS → HTML scraping.
+Status of every source Vacancy Radar collects from. A source's terms and robots.txt are checked and recorded here before its adapter is written, and HTML is scraped only where both allow it. Order of preference: official API → RSS → HTML scraping.
 
 All checks below were made on **2026-11-05** with the project User-Agent `vacancy-radar/0.1 (+https://github.com/01IVAN10/vacancy-radar)`, using a handful of requests per site with ≥3 s between them. Re-check a source's terms before changing how it is collected.
 
