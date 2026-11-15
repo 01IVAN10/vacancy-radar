@@ -1,4 +1,6 @@
-"""Which failed requests are worth retrying, and when. Pure: no I/O.
+"""Which failed requests are worth retrying, and when.
+
+No I/O; the backoff delay is random within its bounds.
 
 Timeouts, network errors and 5xx are usually over within minutes, so they are
 retried with exponential backoff and full jitter. 403 and 429 mean the source
@@ -8,8 +10,8 @@ not fix themselves on a retry.
 """
 
 import httpx
-from celery.utils.time import get_exponential_backoff_interval
 
+from vacancy_radar.backoff import exponential_backoff
 from vacancy_radar.ratelimit import RateLimitError
 
 # Backoff doubles from 30 s, capped at 10 min, and full jitter picks a random
@@ -46,11 +48,8 @@ def retry_delay(exc: BaseException, retries: int) -> int | None:
     if not is_retryable(exc):
         return None
 
-    backoff = get_exponential_backoff_interval(
-        factor=BACKOFF_FACTOR_SECONDS,
-        retries=retries,
-        maximum=BACKOFF_MAX_SECONDS,
-        full_jitter=True,
+    backoff = exponential_backoff(
+        retries, base=BACKOFF_FACTOR_SECONDS, cap=BACKOFF_MAX_SECONDS, jitter=True
     )
     delay = max(MIN_DELAY_SECONDS, backoff)
 
