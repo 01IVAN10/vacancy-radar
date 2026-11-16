@@ -1,5 +1,8 @@
 # Vacancy Radar
 
+[![CI](https://github.com/01IVAN10/vacancy-radar/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/01IVAN10/vacancy-radar/actions/workflows/ci.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/01IVAN10/vacancy-radar/branch/main/graph/badge.svg)](https://codecov.io/gh/01IVAN10/vacancy-radar)
+
 IT job aggregator with market analytics. It collects vacancies from public feeds, deduplicates and normalizes them, sends subscription matches to Telegram, and shows market analytics.
 
 Status: stages 0–10 of [`PLAN.md`](PLAN.md) are done: collection from Djinni and DOU, normalization, accounts and subscriptions, Telegram delivery, deduplication across sources, search and analytics. Next is the deploy to a VPS (stage 11). [`docs/sources.md`](docs/sources.md) describes how each data source may be used.

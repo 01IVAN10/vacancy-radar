@@ -194,7 +194,7 @@ Deferred on 2026-11-16 because there is no budget for hosting yet; the items bel
 
 ### Stage 12: Polish
 - [ ] README: architecture diagram, screenshots, quickstart, decisions and trade-offs
-- [ ] CI and coverage badges
+- [x] CI and coverage badges
 - [ ] Verify the MVP definition of done in `CLAUDE.md`
 
 ## Deferred (post-MVP)
