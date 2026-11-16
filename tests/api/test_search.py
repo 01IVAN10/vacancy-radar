@@ -221,6 +221,16 @@ async def test_every_page_links_to_the_search(client: AsyncClient) -> None:
     assert '<form method="get" action="/vacancies">\n  <fieldset role="search">' in response.text
 
 
+async def test_the_home_search_button_has_the_search_page_label(client: AsyncClient) -> None:
+    # Pico lays out the search field and its button as one row; a longer label
+    # wraps onto two lines and makes the button taller than the field.
+    home = await client.get("/")
+    search = await client.get("/vacancies")
+
+    assert '<button type="submit">Search</button>' in home.text
+    assert '<button type="submit">Search</button>' in search.text
+
+
 async def test_the_salary_field_takes_only_digits_before_sending(client: AsyncClient) -> None:
     response = await client.get("/vacancies")
 
