@@ -17,10 +17,13 @@ Real data from Djinni and DOU, 5–15 November 2026 ([Real data for a demo](#rea
 | **Salaries by week** | **Subscriptions** |
 | ![Weekly salary median and 25th–75th percentiles, with n per week](docs/images/analytics-salaries.png) | ![Subscriptions at /subscriptions](docs/images/subscriptions.png) |
 
-<!-- Added after the Telegram check and the recording:
-![A match in Telegram](docs/images/telegram.png)
-Demo (60 s): https://github.com/user-attachments/assets/<id>
--->
+Matches arrive in Telegram, one message per job, with the subscription that matched:
+
+<img src="docs/images/telegram.png" alt="Three matches in Telegram: title, format, skills, a link to the source and the matching subscription" width="420">
+
+### Demo
+
+https://github.com/user-attachments/assets/acb0b88a-7700-4330-ac67-53b2089cffc4
 
 ## Architecture
 
