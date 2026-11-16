@@ -7,15 +7,18 @@ IT job aggregator with market analytics. It collects vacancies from public feeds
 
 Status: stages 0–10 of [`PLAN.md`](PLAN.md) are done: collection from Djinni and DOU, normalization, accounts and subscriptions, Telegram delivery, deduplication across sources, search and analytics. Collection runs on a schedule into a free hosted database, and the whole stack runs locally with one command. The production deploy is deferred (see [Deployment](#deployment-deferred)). [`docs/sources.md`](docs/sources.md) describes how each data source may be used.
 
-<!-- Screenshots and a demo video are added once they are recorded:
-
 ## Screenshots
 
-| Search | Analytics |
-|---|---|
-| ![Search at /vacancies](docs/images/vacancies.png) | ![Analytics at /analytics](docs/images/analytics.png) |
-| ![Subscriptions](docs/images/subscriptions.png) | ![A match in Telegram](docs/images/telegram.png) |
+Real data from Djinni and DOU, 5–15 November 2026 ([Real data for a demo](#real-data-for-a-demo)).
 
+| Search | Top skills |
+|---|---|
+| ![Search for "python" at /vacancies: jobs with level, format, skills and an excerpt](docs/images/vacancies.png) | ![Top skills of the month at /analytics, with the sample size](docs/images/analytics.png) |
+| **Salaries by week** | **Subscriptions** |
+| ![Weekly salary median and 25th–75th percentiles, with n per week](docs/images/analytics-salaries.png) | ![Subscriptions at /subscriptions](docs/images/subscriptions.png) |
+
+<!-- Added after the Telegram check and the recording:
+![A match in Telegram](docs/images/telegram.png)
 Demo (60 s): https://github.com/user-attachments/assets/<id>
 -->
 
@@ -24,7 +27,7 @@ Demo (60 s): https://github.com/user-attachments/assets/<id>
 Two collectors share one adapter per source and the same storage code. Today a GitHub Actions job, started by an external cron, collects into a free hosted Postgres, because RSS feeds keep no history. Locally, `docker compose up` runs the full stack, where Celery collects and processes vacancies.
 
 ```mermaid
-flowchart LR
+flowchart TB
     feeds["Djinni and DOU<br/>RSS feeds"]
 
     subgraph hosted["Hosted today (free tiers)"]
@@ -40,11 +43,13 @@ flowchart LR
         bot["Telegram bot<br/>long polling"] --> pg
     end
 
+    tg["Telegram Bot API"]
+
     feeds --> gha
     feeds --> worker
-    worker -- "matches" --> tg["Telegram Bot API"]
-    bot <--> tg
     neon -. "pg_dump backup,<br/>demo data" .-> pg
+    worker -- "matches" --> tg
+    bot <--> tg
 ```
 
 Inside the database every step derives its table from the one before, so a better parser rebuilds everything from the raw items:
@@ -90,7 +95,7 @@ The site is at http://localhost:8000, where anyone can search vacancies at `/vac
 
 To override settings, copy `.env.example` to `.env` and edit it.
 
-The database starts empty. The worker fetches Djinni within 5 minutes, and vacancies show on the site once they are normalized (every 10 minutes) and the analytics are refreshed (every 30). DOU is collected only into the hosted database (see [Background collection](#background-collection-celery)).
+The database starts empty. The worker fetches Djinni within 5 minutes, and a vacancy shows in search once it is normalized (every 10 minutes) and given a cluster (every 5); the analytics are refreshed every 30. From a fresh clone, the first 100 Djinni jobs were searchable after about 15 minutes. DOU is collected only into the hosted database (see [Background collection](#background-collection-celery)).
 
 ### Real data for a demo
 
