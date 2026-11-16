@@ -61,9 +61,17 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run pytest --cov
+      - run: uv run pytest --cov --cov-report=term --cov-report=xml
       - name: Domain coverage ≥ 90% (MVP definition of done)
         run: uv run coverage report --include='src/vacancy_radar/domain/*' --fail-under=90
+      # Feeds the README coverage badge. An outage at Codecov does not fail CI;
+      # the gate above is what enforces coverage.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7.1.1
+        with:
+          files: coverage.xml
+          disable_search: true
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   docker:
     runs-on: ubuntu-latest
