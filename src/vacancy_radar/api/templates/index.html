@@ -7,13 +7,13 @@
 <form method="get" action="{{ url_for('vacancies').path }}">
   <fieldset role="search">
     <input type="search" name="q" placeholder='python django, "data engineer"' aria-label="Words to search for">
-    <button type="submit">Search vacancies</button>
+    <button type="submit">Search</button>
   </fieldset>
 </form>
 {% if user %}
   <p>You are signed in as {{ user.email }}.</p>
   <p><a href="{{ url_for('subscriptions_list').path }}" role="button">Your subscriptions</a></p>
 {% else %}
-  <p><a href="/register" role="button">Create an account</a> <a href="/login">or sign in</a></p>
+  <p class="actions"><a href="/register" role="button">Create an account</a> <a href="/login">or sign in</a></p>
 {% endif %}
 {% endblock %}

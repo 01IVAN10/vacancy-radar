@@ -2,6 +2,7 @@
 
 form.inline { display: inline-block; margin: 0; }
 form.inline button { margin: 0; padding: 0.25rem 0.75rem; }
+p.actions a[role="button"] { margin-right: 0.75rem; }
 td.actions { white-space: nowrap; text-align: right; }
 .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
 article.job header { margin-bottom: 0.75rem; }
