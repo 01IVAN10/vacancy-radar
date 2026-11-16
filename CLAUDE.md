@@ -7,7 +7,7 @@ It is a portfolio project for Python Developer / Data Analyst roles, and recruit
 Roadmap and progress: `PLAN.md`. Before starting work, find the current stage there. Tick its checkboxes as part of the same PR.
 
 ## MVP definition of done
-- Collection from ≥1 source runs on schedule in production.
+- Collection from ≥1 source runs on a schedule into the hosted database (Neon, started by cron-job.org through GitHub Actions), and the full stack runs locally with one command.
 - Duplicates of one vacancy across sources are grouped into one cluster.
 - A user can register, create a subscription, link Telegram, and receive a match exactly once.
 - `/analytics` shows: top skills per month, salary ranges per week, new vacancies per week.
@@ -17,7 +17,7 @@ Roadmap and progress: `PLAN.md`. Before starting work, find the current stage th
 ## Stack
 Python 3.12, uv, FastAPI, Jinja2 + HTMX + Chart.js (CDN), PostgreSQL 16 (FTS, GIN, pg_trgm, unaccent), SQLAlchemy 2.0 + Alembic, psycopg 3, Celery + Celery Beat, Redis, httpx, feedparser, pydantic-settings, structlog, pytest + respx, ruff, mypy, pre-commit, Docker Compose, Caddy, GitHub Actions.
 
-Hosting: a ~€4/month VPS. Until it exists, a GitHub Actions cron workflow runs the collector CLI against a free hosted Postgres (Neon/Supabase), because RSS keeps no history. That data moves to the VPS at deploy time.
+Hosting: the production deploy to a ~€4/month VPS (stage 11) is deferred for lack of a hosting budget. Meanwhile a GitHub Actions workflow, started by cron-job.org, runs the collector CLI against a free hosted Postgres (Neon), because RSS keeps no history, and the rest of the stack runs locally. That data moves to the VPS if the deploy happens.
 
 ## Architecture decisions
 - **Raw first.** Every fetched item is stored unchanged in `raw_vacancy` (JSONB). Normalized tables are derived from it and can be rebuilt at any time when parsers improve.
@@ -45,7 +45,7 @@ Source order of preference: official API → RSS → HTML scraping. Scrape HTML 
 
 ## Git flow
 - `main` is always deployable. Commit to it directly only for the initial bootstrap commit.
-- Each feature or fix gets its own branch `feat/<name>`, `fix/<name>`, `refactor/<name>`, or `chore/<name>`, then a PR into `main`. Merge only when CI is green.
+- Each feature or fix gets its own branch `feat/<name>`, `fix/<name>`, `refactor/<name>`, `docs/<name>`, or `chore/<name>`, then a PR into `main`. Merge only when CI is green.
 - Use Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
 - **Recommend, then wait for confirmation.** When a logical unit of work is finished and tests and linters pass, suggest a commit (proposed message + files), a push, or opening a PR. Run git commit, push, PR creation, and merge only after the author confirms that specific action.
 - Before saying "done", run CI's checks locally (`uv run pytest --cov`, `uv run coverage report --include='src/vacancy_radar/domain/*' --fail-under=90`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`) and report the results. Plain `uv run mypy` type-checks `tests/` too, as CI does.

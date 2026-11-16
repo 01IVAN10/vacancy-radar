@@ -6,7 +6,7 @@ Order follows a vertical slice: start accumulating raw data as early as possible
 
 ## Current state
 
-Updated 2026-11-15.
+Updated 2026-11-16.
 
 - **Stage 3** is done. Djinni and DOU are collected into Neon, started every 15 minutes by cron-job.org because GitHub drops scheduled runs (see `docs/collection.md`). A week of runs (2026-11-06 to 11-12) missed no items; Djinni is fetched every 30 minutes with a wide margin, DOU mostly every 45 with a thin one at the weekday peak (`docs/collection.md`, Measured). Since `fix/dou-due-wait` the collector waits up to 2 minutes for a source that is almost due, and DOU is fetched every 30 minutes: all 53 gaps in the first 27 hours were 30:01–30:02 (`docs/collection.md`, Measured after the wait). A burst of more than about 50 DOU postings in half an hour can still push items out of the feed; on 2026-11-13 a burst of 54 left a margin of 3.
 - **Stage 4** is done: Celery collection with Beat, retries, and a Redis rate limiter. It runs locally in Compose for Djinni only, and in production from stage 11, when it replaces the GitHub Actions job.
@@ -23,7 +23,8 @@ Updated 2026-11-15.
 - **Stage 10** is done: deduplication across Djinni and DOU is checked against 433 hand-labelled pairs from the Neon backup of 2026-11-15 (`scripts/dedup_sample.py audit`, #45). The stage 8 rule made no wrong merge but joined 301 of 370 duplicate pairs; most misses were one text with a company introduction added on one site. Across sources, a description that is 90% inside the other now counts too (containment), which joins 327 of 370 with no wrong merge (`docs/deduplication.md`). It runs locally only; the VPS clusters Neon's raw data in stage 11.
 - **Problems on the way (stage 10):** the review of #45 found that the audit let its own "plainly the same" shortcut override hand labels, and that looking for pairs through rare shingles missed 4 close pairs; labels now win and pairs are found by prefix filtering, which loses none. Since migration 0015 Neon's schema dump carries `pg_attver` column options that a plain Postgres rejects, so the check builds the schema from migrations and loads only the raw items. SKELAR's "Product Manager", a non-duplicate of the stage 8 fixture, turned out to be one job: the whole Djinni text is inside DOU's.
 - **Before stage 11:** the architecture review of `main` (2026-11-15) is done. Its prep PRs are merged: the image carries the migrations and Compose applies them with a one-shot `migrate` service, so `docker compose up --build` gives a working site on an empty database (#54); a short `SECRET_KEY` is rejected, cookies are `Secure` when `PUBLIC_BASE_URL` is https, and the web app, worker and bot refuse to start in production without an https site URL or with a development key (#55); README and docstrings match the code (#56); retry backoff is one module, and only `worker.py` and the task modules use Celery (#57). The rest is in issues #47–#53, with the inputs for stage 11 in #53.
-- **Next:** stage 11 (deploy to the VPS).
+- **Stage 11 is deferred** (2026-11-16): there is no budget for hosting yet. Collection into Neon keeps running, so raw data keeps accumulating for a later deploy. Everything else runs locally, where `docker compose up --build` starts the full stack. The project is finished as a portfolio project without a production deploy; the MVP definition of done in `CLAUDE.md` is reworded to match.
+- **Next:** stage 12 (polish), the last stage before the project is complete.
 
 ## Phase A: Start accumulating data
 
@@ -177,7 +178,10 @@ Decisions (2026-11-15):
 - **Containment across sources only.** Two descriptions from different sources are also the same job when 90% of the shorter one's shingles are in the other (`CROSS_SOURCE_CONTAINMENT`), because one site often wraps the same text in a company introduction or benefits. Within one source only Jaccard 0.85 counts: the labels cover pairs across sources only. The margin is thin: two roles of one company template reach 0.83 and are kept apart only by their titles, and Djinni's feed has no company or places to veto with. A minimum text size for containment (100 shingles) would cost 2 of 28 pairs and stop nothing seen, so it is held back until a wrong merge turns up. The author chose it over Jaccard 0.75 across sources (13 more pairs instead of 26), and decided the three unsure pairs it turned on (Sigma Software, SKELAR, Applyft: one job each).
 - **The vetoes and the title rule stay.** They miss 26 duplicate pairs (synonyms and translations of titles, a level named on one site only), but keep apart 51 pairs of different roles of one company that share their text.
 
-### Stage 11: Deploy to VPS
+### Stage 11: Deploy to VPS (deferred)
+
+Deferred on 2026-11-16 because there is no budget for hosting yet; the items below stay as the plan for when there is. Until then, cron-job.org starts the `Collect` workflow every 15 minutes and it collects Djinni and DOU into Neon, and the rest of the stack runs locally. Already done for the deploy: the image carries the migrations and a one-shot `migrate` service applies them (#54), production settings refuse a development key or a non-https site URL and make cookies `Secure` (#55), the API logs JSON, hides `/docs` in production and has no inline styles, so a CSP can forbid them (#62), and CI builds the image and smoke-tests `/health` in it. The rest of #48 and the inputs in #53 stay open for this stage.
+
 - [ ] Production Compose file + Caddy (HTTPS)
 - [ ] VPS setup: Docker, firewall, non-root user; Postgres and Redis not exposed, Redis password
 - [ ] Nightly `pg_dump` backup + tested restore
