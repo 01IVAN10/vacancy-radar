@@ -266,3 +266,7 @@ migrations/     # Alembic migrations (the only way the schema changes)
 scripts/        # developer tools run by hand, e.g. measuring deduplication on a backup
 tests/          # pytest; fixtures/ holds saved source responses
 ```
+
+## License
+
+[MIT](LICENSE). The license covers the code. Vacancy data belongs to the sites it comes from and is used as each one allows ([`docs/sources.md`](docs/sources.md)).
