@@ -24,7 +24,8 @@ Updated 2026-11-16.
 - **Problems on the way (stage 10):** the review of #45 found that the audit let its own "plainly the same" shortcut override hand labels, and that looking for pairs through rare shingles missed 4 close pairs; labels now win and pairs are found by prefix filtering, which loses none. Since migration 0015 Neon's schema dump carries `pg_attver` column options that a plain Postgres rejects, so the check builds the schema from migrations and loads only the raw items. SKELAR's "Product Manager", a non-duplicate of the stage 8 fixture, turned out to be one job: the whole Djinni text is inside DOU's.
 - **Before stage 11:** the architecture review of `main` (2026-11-15) is done. Its prep PRs are merged: the image carries the migrations and Compose applies them with a one-shot `migrate` service, so `docker compose up --build` gives a working site on an empty database (#54); a short `SECRET_KEY` is rejected, cookies are `Secure` when `PUBLIC_BASE_URL` is https, and the web app, worker and bot refuse to start in production without an https site URL or with a development key (#55); README and docstrings match the code (#56); retry backoff is one module, and only `worker.py` and the task modules use Celery (#57). The rest is in issues #47–#53, with the inputs for stage 11 in #53.
 - **Stage 11 is deferred** (2026-11-16): there is no budget for hosting yet. Collection into Neon keeps running, so raw data keeps accumulating for a later deploy. Everything else runs locally, where `docker compose up --build` starts the full stack. The project is finished as a portfolio project without a production deploy; the MVP definition of done in `CLAUDE.md` is reworded to match.
-- **Next:** stage 12 (polish), the last stage before the project is complete.
+- **Stage 12** is done: CI and coverage badges (#64), and a README with architecture diagrams, decisions and trade-offs, the deferred deploy, screenshots and a demo video (#65, #67). The MVP definition of done was checked on 2026-11-16 (#67): collection into Neon runs every 15 minutes; a fresh clone with no `.env` came up with `docker compose up --build`, and its first 100 Djinni jobs were searchable after about 15 minutes; deduplication and `/analytics` work on the Neon backup of 2026-11-15 (4439 postings, 4051 jobs); 48 matches reached Telegram once each, and restarting the worker and the bot and running `notify.send` again sent none twice; CI is green with `domain/` coverage at 100%. Found on the way: the home page search button wrapped onto two lines (#66).
+- **The project is complete** as a portfolio project without a production deploy. Stage 11 stays deferred until there is a hosting budget; issues #48–#51 and #53 stay open for it and for later refactoring.
 
 ## Phase A: Start accumulating data
 
@@ -193,9 +194,9 @@ Deferred on 2026-11-16 because there is no budget for hosting yet; the items bel
 - [ ] Smoke check after deploy, including one job posted on Djinni and DOU: one cluster, one Telegram message
 
 ### Stage 12: Polish
-- [ ] README: architecture diagram, screenshots, quickstart, decisions and trade-offs
+- [x] README: architecture diagram, screenshots, quickstart, decisions and trade-offs
 - [x] CI and coverage badges
-- [ ] Verify the MVP definition of done in `CLAUDE.md`
+- [x] Verify the MVP definition of done in `CLAUDE.md`
 
 ## Deferred (post-MVP)
 Email notifications, Work.ua and other sources, Jupyter notebook with market research, admin panel, ML seniority classification, scheduled digests, Sentry/Prometheus, UI i18n.
